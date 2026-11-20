@@ -188,9 +188,10 @@ namespace HallowAssist
                     pw.Focus();
                 }, true);
                 connect.IsEnabled = canGo; DockPanel.SetDock(connect, Dock.Right); row.Children.Add(connect);
-                var info = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-                info.Children.Add(Ui.T(p.Name, 13, true));
-                info.Children.Add(Ui.Muted(Ui.FormatCode(p.Code) + (p.Key != null ? "  -  password remembered" : "  -  type the password"), 11.5));
+                var info = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 12, 0) };
+                var nameText = Ui.T(p.Name, 13, true); nameText.TextTrimming = TextTrimming.CharacterEllipsis; info.Children.Add(nameText);
+                var detail = Ui.Muted(Ui.FormatCode(p.Code) + (p.Key != null ? "  -  remembered" : "  -  type the password"), 11.5); detail.TextTrimming = TextTrimming.CharacterEllipsis; info.Children.Add(detail);
+                info.ToolTip = p.Key != null ? "The password is remembered on this PC (as an encrypted key)." : "You type the password each time.";
                 row.Children.Add(info);
                 helpSomeone.Children.Add(row);
             }

@@ -172,8 +172,8 @@ namespace HallowAssist
             sp.Children.Add(Ui.Muted("Only for your own PCs. With it on, you can connect to this PC from your other PC, phone or TV browser without anyone clicking Allow here. " +
                 "Hallow Assist starts with Windows and waits for you; the red bar still shows while you're connected, and Ctrl+Alt+End or Disconnect still end it.", 12.5, 12));
             sp.Children.Add(Ui.T("Pick a password just for this (at least 12 characters, not one you use anywhere else):", 12.5, false, null, 6));
-            p1 = new PasswordBox { Height = 32, Padding = new Thickness(8, 6, 8, 6), Background = Ui.B("#1A1522"), Foreground = Ui.R("Text"), BorderBrush = Ui.R("Line"), Margin = new Thickness(0, 0, 0, 8) };
-            p2 = new PasswordBox { Height = 32, Padding = new Thickness(8, 6, 8, 6), Background = Ui.B("#1A1522"), Foreground = Ui.R("Text"), BorderBrush = Ui.R("Line"), Margin = new Thickness(0, 0, 0, 8) };
+            p1 = Ui.PasswordField();
+            p2 = Ui.PasswordField();
             sp.Children.Add(p1); sp.Children.Add(Ui.Muted("Again:", 12, 4)); sp.Children.Add(p2);
             err = Ui.T("", 12, false, Ui.Amber, 8); sp.Children.Add(err);
             sp.Children.Add(Ui.Muted("The password is never stored - only a key made from it, encrypted for your Windows account.", 11.5, 12));
@@ -220,7 +220,7 @@ namespace HallowAssist
             if (needPassword)
             {
                 sp.Children.Add(Ui.Muted("Its unattended password - only needed if you tick Remember", 12, 4));
-                pw = new PasswordBox { Height = 32, Padding = new Thickness(8, 6, 8, 6), Background = Ui.B("#1A1522"), Foreground = Ui.R("Text"), BorderBrush = Ui.R("Line"), Margin = new Thickness(0, 0, 0, 8) };
+                pw = Ui.PasswordField();
                 sp.Children.Add(pw);
             }
             remember = new CheckBox { Content = "Remember the password on this PC", IsChecked = false, Foreground = Ui.R("Text"), Margin = new Thickness(0, 4, 0, 4) };

@@ -67,6 +67,7 @@ namespace HallowAssist
             c.Click += (s, e) => changed(c.IsChecked == true);
             return c;
         }
+        public static PasswordBox PasswordField() { return new PasswordBox { Style = S("PasswordField"), Margin = new Thickness(0, 0, 0, 8) }; }
         public static TextBox Field(string text = "", double width = double.NaN) { var t = new TextBox { Text = text, Style = S("Field") }; if (!double.IsNaN(width)) t.Width = width; return t; }
         public static string FormatCode(string c) { c = Kdf.NormCode(c); return c.Length == 9 ? c.Substring(0, 3) + " " + c.Substring(3, 3) + " " + c.Substring(6) : c; }
     }
