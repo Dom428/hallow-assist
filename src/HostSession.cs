@@ -244,7 +244,7 @@ namespace HallowAssist
                 case "quality": { var q = Msg.Str(m, "q"); if (q == "auto" || q == "best" || q == "balanced" || q == "fast") { quality = q; var f = Quality.Fixed(q); if (f >= 0) SetLevel(f); } break; }
                 case "refresh": keyframe = true; break;
                 case "direct-offer": TryDirect(m); break;
-                case "switch": { var t = tx; if (t != null) t.PeerSwitched(); break; }
+                case "switch": { var sx = tx; if (sx != null) sx.PeerSwitched(); break; }
                 case "ping": SendJson("t", "pong", "ts", Msg.Num(m, "ts")); break;
                 case "chat": { var text = Msg.Str(m, "text") ?? ""; if (text.Length > 2000) text = text.Substring(0, 2000); var h = Chat; if (h != null) h(text); break; }
                 case "clip": if (Clipboard && o.Clip != null) { var text = Msg.Str(m, "text") ?? ""; if (text.Length <= 1000000) { lastClip = text; o.Clip.Set(text); Say("The helper put text on your clipboard."); } } break;

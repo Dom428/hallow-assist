@@ -193,7 +193,7 @@ namespace HallowAssist
                 case "pong": RttMs = (int)Math.Max(0, (long)(DateTime.UtcNow - new DateTime(1970, 1, 1)).TotalMilliseconds - Msg.Num(m, "ts")); break;
                 case "q": QualityLabel = Msg.Str(m, "label") ?? ""; Fire(); break;
                 case "bye": End(Msg.Str(m, "reason") ?? "They ended the session.", false); break;
-                case "switch": { var t = tx; if (t != null) t.PeerSwitched(); break; }
+                case "switch": { var sx = tx; if (sx != null) sx.PeerSwitched(); break; }
                 case "restarting": Restarting = true; Status = "Their PC is restarting - Hallow Assist reconnects when it's back."; Fire(); break;
                 case "note": { var t = Msg.Str(m, "text"); if (!string.IsNullOrEmpty(t)) Say(t); break; }
                 default: Files.Handle(m); break;
