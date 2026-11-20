@@ -93,7 +93,7 @@ namespace HallowAssist
             v.Painted += r => { lock (dirtyLock) dirty = dirty.IsEmpty ? r : System.Drawing.Rectangle.Union(dirty, r); if (System.Threading.Interlocked.Exchange(ref pending, 1) == 0) Dispatcher.BeginInvoke(new Action(Paint), DispatcherPriority.Render); };
             v.Chat += t => Dispatcher.BeginInvoke(new Action(() => { OpenChat(); chat.Add("Them", t, false); }));
             v.Note += t => Dispatcher.BeginInvoke(new Action(() => Note(t)));
-            v.Files.Offered += (name, size, answer) => Dispatcher.BeginInvoke(new Action(() => new PromptWindow("They want to send you a file", name + " (" + Transfers.Size(size) + "). It goes into " + v.Files.Folder + ".", "Accept", "Decline", answer) { Owner = this }.Show()));
+            v.Files.Offered += (name, size, answer) => Dispatcher.BeginInvoke(new Action(() => new PromptWindow("They want to send you a file", name + " (" + Transfers.Size(size) + "). It goes into " + v.Files.Folder + "." + Transfers.Warning(name), "Accept", "Decline", answer) { Owner = this }.Show()));
             if (!Snap.On) { var t = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) }; t.Tick += (s, e) => ShowStats(); t.Start(); }
             Refresh();
         }

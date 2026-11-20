@@ -19,14 +19,14 @@ using WF = System.Windows.Forms;
 [assembly: AssemblyTitle("Hallow Assist")]
 [assembly: AssemblyProduct("Hallow Assist")]
 [assembly: AssemblyDescription("Remote help for friends and family")]
-[assembly: AssemblyVersion("1.0.0.0")]
-[assembly: AssemblyFileVersion("1.0.0.0")]
+[assembly: AssemblyVersion("1.1.0.0")]
+[assembly: AssemblyFileVersion("1.1.0.0")]
 
 namespace HallowAssist
 {
     public static class Program
     {
-        public const string Version = "1.0";
+        public const string Version = "1.1";
         [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr v);
 
         [STAThread]
@@ -131,7 +131,7 @@ namespace HallowAssist
             hotkeyWin.AddHook(HotkeyHook);
             WriteStatus();
             var st = new DispatcherTimer { Interval = TimeSpan.FromSeconds(60) }; st.Tick += (s, e) => WriteStatus(); st.Start();
-            if (S.Unattended && UnattendedAllowed()) StartUnattended();
+            if (S.Unattended) RetryUnattended();
             if (!tray && !AssistSettings.Headless) ShowMain();
             if (!AssistSettings.Headless) ui.BeginInvoke(new Action(ShowCrashNotice), DispatcherPriority.ApplicationIdle);
         }
@@ -194,7 +194,7 @@ namespace HallowAssist
             {
                 Log("file offered: " + name);
                 if (AssistSettings.Headless) { lock (pendingFiles) pendingFiles.Enqueue(answer); return; }
-                new PromptWindow((h.HelperName ?? "Your helper") + " wants to send you a file", name + " (" + Transfers.Size(size) + "). It goes into " + h.Files.Folder + ". Only accept files you expect.", "Accept", "Decline", answer).Show();
+                new PromptWindow((h.HelperName ?? "Your helper") + " wants to send you a file", name + " (" + Transfers.Size(size) + "). It goes into " + h.Files.Folder + ". Only accept files you expect." + Transfers.Warning(name), "Accept", "Decline", answer).Show();
             }));
             h.Ended += r => ui.BeginInvoke(new Action(() => HostEnded(h, r)));
             h.WrongPassword += () => ui.BeginInvoke(new Action(() => { if (h.Unattended && h.WrongPasswords >= 5) { S.UnattendedLockedUntil = DateTime.Now.AddMinutes(15).ToString("o"); S.Save(); } }));
@@ -260,9 +260,29 @@ namespace HallowAssist
             {
                 var wait = h.Unattended ? unattendedBackoff : 3; unattendedBackoff = Math.Min(300, unattendedBackoff * 2);
                 var t = new DispatcherTimer { Interval = TimeSpan.FromSeconds(wait) };
-                t.Tick += (s, e) => { t.Stop(); if (!quitting && S.Unattended && UnattendedAllowed() && (host == null || host.State == HostState.Ended)) StartUnattended(); };
+                t.Tick += (s, e) => { t.Stop(); RetryUnattended(); };
                 t.Start();
             }
+        }
+        // v1.1: after 5 wrong unattended passwords access pauses for 15 minutes - and now really comes back afterwards
+        // (before, the retry found it locked and gave up until the app was restarted, so your own PC stayed unreachable)
+        void RetryUnattended()
+        {
+            if (quitting || !S.Unattended || (host != null && host.State != HostState.Ended)) return;
+            var left = UnattendedLockLeft();
+            if (left > TimeSpan.Zero)
+            {
+                var t = new DispatcherTimer { Interval = left + TimeSpan.FromSeconds(1) };
+                t.Tick += (s, e) => { t.Stop(); RetryUnattended(); };
+                t.Start(); return;
+            }
+            if (UnattendedAllowed()) StartUnattended();
+        }
+        TimeSpan UnattendedLockLeft()
+        {
+            DateTime until;
+            if (!DateTime.TryParse(S.UnattendedLockedUntil, null, System.Globalization.DateTimeStyles.RoundtripKind, out until)) return TimeSpan.Zero;
+            var left = until - DateTime.Now; return left > TimeSpan.Zero ? left : TimeSpan.Zero;
         }
 
         // ---------------- unattended access (own PCs only; off by default)

@@ -147,6 +147,15 @@ namespace HallowAssist.Tests
             var k = Msg.Key(0xE04D, false); Ok(Msg.RU16(k, 2) == 0xE04D && k[4] == 0, "key message (extended scan code)");
             var j = Msg.ParseJson(Msg.JsonMsg("t", "chat", "text", "héllo")); Ok(Msg.Str(j, "text") == "héllo", "JSON message round trip with non-ASCII");
             Ok(Transfers.SafeName("..\\..\\evil.exe") == "evil.exe" && Transfers.SafeName("a/b/c:d?.txt") == "c_d_.txt" && Transfers.SafeName("CON.txt") == "_CON.txt" && Transfers.SafeName("") == "file", "file names from the other side are made safe");
+            Ok(Transfers.SafeName("con.tar.gz") == "_con.tar.gz" && Transfers.SafeName("COM7.txt") == "_COM7.txt" && Transfers.SafeName("LPT9") == "_LPT9" && Transfers.SafeName("Console.txt") == "Console.txt" && Transfers.SafeName("COMPUTER.txt") == "COMPUTER.txt", "every reserved device name is made safe, other names are left alone");
+            { var big = new FrameMsg { EncW = 65535, EncH = 65535, Seq = 1 }.Encode(); bool refused = false; try { FrameMsg.Parse(big); } catch (System.IO.InvalidDataException) { refused = true; }
+              var ok4k = FrameMsg.Parse(new FrameMsg { EncW = 3840, EncH = 2160, Seq = 2 }.Encode());
+              Ok(refused && ok4k.EncW == 3840, "a frame claiming a giant picture is refused; 4K still passes"); }
+            Ok(Transfers.Risky("setup.EXE") && Transfers.Risky("a.lnk") && Transfers.Risky("x.ps1") && !Transfers.Risky("photo.jpg") && !Transfers.Risky("notes.txt") && Transfers.Warning("photo.jpg") == "", "programs and scripts get a warning in the file prompt");
+            { var tmp = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "assist-motw-" + Guid.NewGuid().ToString("N") + ".txt"); System.IO.File.WriteAllText(tmp, "x");
+              bool marked = Transfers.MarkFromInternet(tmp); string zone = null;
+              try { zone = System.IO.File.ReadAllText(tmp + ":Zone.Identifier"); } catch { }
+              Ok(marked && (zone == null || zone.Contains("ZoneId=3")), "received files are marked as from the internet"); try { System.IO.File.Delete(tmp); } catch { } }
         }
 
         static void Misc()

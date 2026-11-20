@@ -225,6 +225,7 @@ namespace HallowAssist
                 else
                 {
                     Control = a.Control; Clipboard = a.Clipboard; State = HostState.Connected;
+                    WrongPasswords = 0;   // v1.1: only wrong tries in a row count towards the unattended pause
                     var mons = o.Screen.Monitors();
                     SendJson("t", "consent", "allowed", true, "control", Control, "clipboard", Clipboard,
                         "monitors", mons.Select((mm, i) => new Dictionary<string, object> { { "i", i }, { "w", mm.W }, { "h", mm.H }, { "primary", mm.Primary } }).ToArray());

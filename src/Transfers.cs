@@ -30,9 +30,33 @@ namespace HallowAssist
             n = (n ?? "").Replace('\\', '/'); n = n.Substring(n.LastIndexOf('/') + 1);
             foreach (var c in System.IO.Path.GetInvalidFileNameChars()) n = n.Replace(c, '_');
             n = n.Trim().TrimEnd('.'); if (n.Length == 0) n = "file"; if (n.Length > 120) n = n.Substring(0, 120);
-            var stem = System.IO.Path.GetFileNameWithoutExtension(n).ToUpperInvariant();
-            if (new[] { "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "LPT1", "LPT2" }.Contains(stem)) n = "_" + n;
+            // v1.1: every reserved device name, whatever follows the first dot ("CON.tar.gz", "com7 .txt" too)
+            var dot = n.IndexOf('.'); var stem = (dot < 0 ? n : n.Substring(0, dot)).Trim().ToUpperInvariant();
+            if (stem == "CON" || stem == "PRN" || stem == "AUX" || stem == "NUL" || stem == "CONIN$" || stem == "CONOUT$" ||
+                (stem.Length == 4 && (stem.StartsWith("COM") || stem.StartsWith("LPT")) && char.IsDigit(stem[3]))) n = "_" + n;
             return n;
+        }
+        // v1.1: programs, scripts and shortcuts - the prompt says so, because opening one runs it
+        static readonly string[] RiskyExt = { ".exe", ".msi", ".msix", ".appx", ".bat", ".cmd", ".com", ".scr", ".pif", ".cpl", ".ps1", ".psm1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh", ".hta", ".lnk", ".url", ".reg", ".jar", ".dll", ".sys", ".inf", ".iso", ".img", ".vhd", ".vhdx", ".application", ".appref-ms", ".settingcontent-ms", ".library-ms", ".search-ms", ".docm", ".xlsm", ".pptm" };
+        public static bool Risky(string name) { var e = System.IO.Path.GetExtension(name ?? "").ToLowerInvariant(); return RiskyExt.Contains(e); }
+        public static string Warning(string name) { return Risky(name) ? " It's a program, script or shortcut: opening it runs it, so only open it if you trust them." : ""; }
+
+        // v1.1: mark received files as coming from the internet (Mark of the Web), so Windows SmartScreen and Office
+        // Protected View treat them like a download instead of a file you made yourself
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+        static extern Microsoft.Win32.SafeHandles.SafeFileHandle CreateFileW(string name, uint access, uint share, IntPtr sec, uint disposition, uint flags, IntPtr template);
+        public static bool MarkFromInternet(string path)
+        {
+            try
+            {
+                using (var h = CreateFileW(path + ":Zone.Identifier", 0x40000000 /* GENERIC_WRITE */, 0, IntPtr.Zero, 2 /* CREATE_ALWAYS */, 0x80, IntPtr.Zero))
+                {
+                    if (h.IsInvalid) return false;
+                    using (var fs = new FileStream(h, FileAccess.Write)) { var b = System.Text.Encoding.ASCII.GetBytes("[ZoneTransfer]\r\nZoneId=3\r\n"); fs.Write(b, 0, b.Length); }
+                }
+                return true;
+            }
+            catch { return false; }
         }
 
         public string Offer(string path)
@@ -90,6 +114,7 @@ namespace HallowAssist
                         if (f.Got != f.Size) { TryDelete(f.Part); Say(f.Name + " arrived incomplete and was removed."); return true; }
                         var dest = Unique(System.IO.Path.Combine(Folder, f.Name));
                         File.Move(f.Part, dest);
+                        MarkFromInternet(dest);
                         Say("Received " + System.IO.Path.GetFileName(dest) + " (" + Size(f.Size) + ") in " + Folder + ".");
                         var h = Received; if (h != null) h(dest);
                         return true;

@@ -161,3 +161,22 @@ test('health endpoint, viewer page with security headers, 404 for anything else'
   assert.equal((await (await fetch(base + '/config.json')).json()).publicUrl, 'https://assist.example.com');
   await r.close();
 });
+
+test('a host slowed down for a stuck viewer is read again once that viewer leaves', async () => {
+  const { r, url } = await start({ idleMs: 60000 });
+  const h = await client(url); h.json({ t: 'host' }); const c = await h.next();
+  const v = await client(url); v.json({ t: 'join', code: c.code }); await v.next(); await h.next();
+  v.socket.pause();   // the viewer stops reading, so the relay's buffer towards it fills up and the host is paused
+  const big = Buffer.alloc(3 * 1024 * 1024, 7);
+  for (let i = 0; i < 8; i++) h.send(big);
+  const hostConn = () => [...r.sessions.values()][0]?.host;
+  for (let i = 0; i < 50 && !hostConn()?.paused; i++) await sleep(50);
+  assert.ok(hostConn()?.paused, 'the relay should have paused the host');
+  v.socket.destroy();
+  // drain anything already queued for the host (paired / big frames are not sent back), then the host must be heard again
+  let m; do { m = await h.next(2000); } while (m && m !== 'timeout' && m.t !== 'peer-left');
+  assert.equal(m.t, 'peer-left');
+  h.json({ t: 'ping' });
+  assert.equal((await h.next(2000)).t, 'pong');
+  await r.close();
+});

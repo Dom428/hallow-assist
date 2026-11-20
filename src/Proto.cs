@@ -45,6 +45,7 @@ namespace HallowAssist
     public class FrameMsg
     {
         public int Mon, SrcW, SrcH, EncW, EncH, Flags; public uint Seq; public List<Tile> Tiles = new List<Tile>();
+        public const long MaxPixels = 8192L * 8192;
         public byte[] Encode()
         {
             var m = new MemoryStream();
@@ -56,6 +57,8 @@ namespace HallowAssist
         {
             if (b.Length < 17 || b[0] != Msg.Frame) throw new InvalidDataException("not a frame");
             var f = new FrameMsg { Mon = b[1], SrcW = Msg.RU16(b, 2), SrcH = Msg.RU16(b, 4), EncW = Msg.RU16(b, 6), EncH = Msg.RU16(b, 8), Seq = Msg.RU32(b, 10), Flags = b[14] };
+            // v1.1: the viewer allocates EncW x EncH x 4 bytes, so a frame claiming a giant picture is refused (8K is 7680 x 4320)
+            if (f.EncW == 0 || f.EncH == 0 || (long)f.EncW * f.EncH > MaxPixels) throw new InvalidDataException("picture size out of range");
             int n = Msg.RU16(b, 15), o = 17;
             for (int i = 0; i < n; i++)
             {

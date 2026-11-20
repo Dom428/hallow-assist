@@ -10,7 +10,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { upgrade } from './ws.js';
 
-export const VERSION = '1.0';
+export const VERSION = '1.1';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 export function config(env = process.env) {
@@ -83,7 +83,10 @@ export function createRelay(opts = {}) {
     to.send(data);
     if (to.bufferedAmount > 8 * 1024 * 1024 && !from.paused) {
       from.paused = true; from.pause();
-      to.once('drain', () => { from.paused = false; from.resume(); });
+      // resume when the receiver catches up - or leaves: a receiver that closes never drains, and the sender
+      // would otherwise stay unread until the idle timeout drops it
+      const go = () => { to.off('drain', go); to.off('close', go); if (from.paused) { from.paused = false; from.resume(); } };
+      to.on('drain', go); to.on('close', go);
     }
   }
 

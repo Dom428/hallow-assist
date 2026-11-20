@@ -45,8 +45,20 @@ end-to-end encrypted.
   timeouts. It never logs payloads, codes or passwords, and stores nothing.
 - Three wrong passwords close a code; five wrong unattended passwords pause unattended access for 15 minutes.
 - Limits worth knowing: the password check is a password-bound key agreement, not a full PAKE - comparing the safety code
-  is the strongest check against a relay that tries to sit in the middle. Your relay operator (you) can see *that* two
+  is the strongest check against a relay that tries to sit in the middle. A dishonest relay that sits in the middle can
+  also try passwords offline against what it saw, so keep the unattended password long (a passphrase of 4+ random
+  words) and always compare the safety code. Your relay operator (you) can see *that* two
   people are connected, from which addresses, and for how long.
+
+## What's new
+
+- **1.1** - Security and reliability fixes from a review: unattended access really comes back after its 15-minute pause
+  (before, it stayed off until the app restarted); only wrong passwords in a row count towards that pause; files you
+  receive are marked as from the internet (Windows SmartScreen warns before running them) and the file prompt says when
+  a file is a program, script or shortcut; every reserved Windows device name is refused as a file name; a frame claiming
+  a giant picture is refused instead of running the helper's app out of memory. Relay 1.1: when a slow helper leaves
+  mid-picture the relay goes on listening to the person being helped (before, it could drop them about a minute later).
+- **1.0** - First version.
 
 ## Install
 

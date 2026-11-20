@@ -32,5 +32,10 @@ PRIVACY
 - End-to-end encrypted: your relay passes sealed messages along and can't see screens,
   keys, chat or files. Crash reports stay on this PC. Nothing else is sent anywhere.
 
+WHAT'S NEW IN 1.1
+- Unattended access really comes back after its 15-minute pause.
+- Received files are marked as from the internet, and the prompt warns about programs and scripts.
+- Safer file names and picture sizes; the relay no longer drops you when a slow helper leaves.
+
 CREDITS
 Icons: Font Awesome Free 7.3.1 by Fonticons, Inc. (https://fontawesome.com), licensed CC BY 4.0 - see FontAwesome-LICENSE.txt.
