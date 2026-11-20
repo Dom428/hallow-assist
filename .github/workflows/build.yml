@@ -5,6 +5,11 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      print_snaps:
+        description: 'Also print these pictures into the log as base64 (comma-separated file names, e.g. main.png)'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -41,6 +46,10 @@ jobs:
           if ($p.ExitCode -ne 0) { throw "--snap failed ($($p.ExitCode))" }
           if (-not (Get-ChildItem snaps -Filter *.png)) { throw "--snap made no pictures" }
           Get-ChildItem snaps | Format-Table Name, Length
+          foreach ($n in ('${{ inputs.print_snaps }}' -split ',' | Where-Object { $_.Trim() })) {
+            $f = Join-Path snaps ([IO.Path]::GetFileName($n.Trim()))
+            if (Test-Path $f) { "SNAP-BEGIN $n"; [Convert]::ToBase64String([IO.File]::ReadAllBytes($f)) -split '(.{4000})' | Where-Object { $_ }; "SNAP-END $n" }
+          }
       - name: Keep the exe
         uses: actions/upload-artifact@v4
         with:
