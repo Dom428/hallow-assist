@@ -1,0 +1,10 @@
+{
+  "name": "Hallow Assist",
+  "short_name": "Assist",
+  "start_url": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#16121C",
+  "theme_color": "#16121C",
+  "icons": [{ "src": "icon.png", "sizes": "192x192", "type": "image/png" }]
+}

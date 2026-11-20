@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#16121C">
+<meta name="referrer" content="no-referrer">
+<title>Hallow Assist</title>
+<link rel="icon" href="icon.png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="viewer.css">
+<script type="module" src="viewer.js"></script>
+</head>
+<body>
+<main id="connect" class="page">
+  <div class="card">
+    <h1><img src="icon.png" alt="" class="logo"><b>HALLOW</b> ASSIST</h1>
+    <p class="muted">Help a friend or family member with their Windows PC. They open Hallow Assist, click <b>Get help</b> and tell you the code and password it shows.</p>
+    <form id="form" autocomplete="off">
+      <label>Their code<input id="code" inputmode="numeric" placeholder="123 456 789" maxlength="13" required></label>
+      <label>Their password<input id="password" autocapitalize="characters" spellcheck="false" placeholder="6 letters or numbers" required></label>
+      <label>Your name (they see it before saying yes)<input id="name" maxlength="40" placeholder="e.g. Dom" required></label>
+      <button id="go" type="submit" class="accent">Connect</button>
+    </form>
+    <p id="status" class="status" role="status"></p>
+    <div id="safetyBox" class="safety hidden">Safety code <b id="safety">----</b><span class="muted">Check it matches the one on their screen. Waiting for them to say yes...</span></div>
+    <p class="small muted">Everything between you and them is end-to-end encrypted: this server only passes sealed messages along and can't see their screen. Nothing happens on their PC until they click Allow, and they can stop it any time.</p>
+    <p class="small muted">Getting help yourself? Install Hallow Assist on your Windows PC from <a href="https://github.com/Dom428/hallow-assist/releases/latest" rel="noopener noreferrer">github.com/Dom428/hallow-assist</a> and use this address as the relay: <b id="relayAddr"></b></p>
+  </div>
+</main>
+
+<section id="session" class="hidden">
+  <nav id="bar">
+    <span id="who" class="who"></span>
+    <span id="monitors" class="group"></span>
+    <button id="bControl" title="Use their mouse and keyboard">Control</button>
+    <button id="bKeys" title="On-screen keyboard">Keyboard</button>
+    <button id="bChat">Chat<i id="chatDot" class="dot hidden"></i></button>
+    <button id="bClip" class="hidden">Clipboard</button>
+    <button id="bFiles">Files</button>
+    <select id="quality" title="Picture quality">
+      <option value="auto">Auto quality</option><option value="best">Best picture</option><option value="balanced">Balanced</option><option value="fast">Fastest</option>
+    </select>
+    <button id="bFit" title="Zoom back to fit">Fit</button>
+    <button id="bCad" disabled title="Ctrl+Alt+Del can't be sent: Windows only accepts it from their own keyboard">Ctrl+Alt+Del</button>
+    <span id="stats" class="stats"></span>
+    <button id="bEnd" class="danger">End</button>
+  </nav>
+  <div id="banner" class="banner hidden"></div>
+  <div id="stage"><canvas id="screen" tabindex="0"></canvas></div>
+  <div id="keyrow" class="keyrow hidden"></div>
+  <textarea id="kbd" class="kbd" autocapitalize="off" autocomplete="off" spellcheck="false" aria-label="Type on their PC"></textarea>
+  <aside id="pChat" class="panel hidden">
+    <header>Chat<button class="close" data-close="pChat">Close</button></header>
+    <div id="chatLog" class="log"></div>
+    <form id="chatForm"><input id="chatText" maxlength="2000" placeholder="Message"><button class="accent">Send</button></form>
+  </aside>
+  <aside id="pClip" class="panel hidden">
+    <header>Clipboard<button class="close" data-close="pClip">Close</button></header>
+    <p class="muted small">Text they copy shows up here. Text you send goes onto their clipboard.</p>
+    <textarea id="clipIn" readonly placeholder="Nothing from them yet"></textarea>
+    <button id="clipCopy">Copy to this device</button>
+    <textarea id="clipOut" placeholder="Text to put on their clipboard"></textarea>
+    <button id="clipSend" class="accent">Send to their clipboard</button>
+  </aside>
+  <aside id="pFiles" class="panel hidden">
+    <header>Files<button class="close" data-close="pFiles">Close</button></header>
+    <p class="muted small">They're asked before any file arrives on their PC. Files they send you are offered here first.</p>
+    <label class="filebtn">Send a file to them<input id="filePick" type="file"></label>
+    <div id="fileList" class="log"></div>
+  </aside>
+  <div id="prompt" class="prompt hidden"><p id="promptText"></p><div><button id="promptYes" class="accent">Accept</button><button id="promptNo">Decline</button></div></div>
+</section>
+<div id="rotate" class="rotate hidden"><p>Turn your phone sideways for a bigger picture.</p><button id="rotateOk">OK</button></div>
+</body>
+</html>

@@ -1,0 +1,7 @@
+# build output
+HallowAssist.exe
+tests/AssistTests.exe
+tests/out/
+server/node_modules/
+server/deploy.env
+package/HallowAssist.exe

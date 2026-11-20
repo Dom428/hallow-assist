@@ -1,0 +1,199 @@
+﻿// Hallow Assist "Help someone": the helper's side. Enter their code and password -> the key agreement checks the password
+// (the relay can't), both sides show the same 4-digit safety code, then the other person decides Allow / Deny.
+using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.Security.Cryptography;
+using System.Threading;
+
+namespace HallowAssist
+{
+    public enum ViewerState { Connecting, Checking, Waiting, Connected, Ended }
+
+    public class ViewerSession
+    {
+        readonly Uri relay; readonly string code, password, name;
+        RelayLink link; Channel chan; EcdhKey ecdh; SessionKeys keys; byte[] pwKey;
+        public volatile ViewerState State = ViewerState.Connecting;
+        public string Safety, HostName, EndReason, Status = "Connecting to the relay...", Banner = "", QualityLabel = "";
+        public bool ControlAllowed, ClipboardAllowed;
+        public MonitorInfo[] Monitors = new MonitorInfo[0];
+        public int Monitor;
+        public readonly FrameBuffer Screen = new FrameBuffer();
+        public readonly object ScreenLock = new object();
+        public long Frames, FrameBytes; public int RttMs;
+        public Transfers Files;
+        public IClip Clip; public volatile bool ClipSync; string lastClip;
+        int ended;
+
+        public event Action Changed;
+        public event Action<Rectangle> Painted;   // an area of Screen changed (on the receive thread)
+        public event Action<string> Chat;
+        public event Action<string> Note;
+        public event Action<string> Ended;
+
+        public ViewerSession(Uri relay, string code, string password, string name)
+        {
+            this.relay = relay; this.code = Kdf.NormCode(code); this.password = password; this.name = string.IsNullOrWhiteSpace(name) ? "Helper" : name.Trim();
+            Files = new Transfers(p => SendPlain(p), () => link == null ? 0 : link.Queued, () => State == ViewerState.Connected, Transfers.DownloadFolder());
+            Files.Note += s => Say(s);
+        }
+        void Fire() { var h = Changed; if (h != null) try { h(); } catch { } }
+        void Say(string s) { var h = Note; if (h != null) try { h(s); } catch { } }
+
+        public void Start()
+        {
+            new Thread(() =>
+            {
+                try
+                {
+                    var pw = new Thread(() => { pwKey = Kdf.PasswordKey(password, code); }); pw.Start();
+                    ecdh = new EcdhKey();
+                    link = new RelayLink();
+                    link.Text += OnText; link.Binary += OnBinary; link.Closed += r => End(State == ViewerState.Connecting ? "Couldn't reach the relay. Check the relay address in Settings." : r, false);
+                    link.Connect(relay);
+                    pw.Join();
+                    link.SendText(Msg.ToJson(new Dictionary<string, object> { { "t", "join" }, { "code", code } }));
+                    new Thread(PingLoop) { IsBackground = true }.Start();
+                }
+                catch (Exception e) { var x = e; while (x.InnerException != null) x = x.InnerException; End("Couldn't reach the relay (" + x.Message.TrimEnd('.') + "). Check the relay address in Settings.", false); }
+            }) { IsBackground = true, Name = "viewer start" }.Start();
+        }
+        void PingLoop()
+        {
+            while (State != ViewerState.Ended)
+            {
+                Thread.Sleep(1000);
+                if (State != ViewerState.Connected) continue;
+                if (Environment.TickCount % 2000 < 1000) SendJson("t", "ping", "ts", (long)(DateTime.UtcNow - new DateTime(1970, 1, 1)).TotalMilliseconds);
+                if (ClipSync && ClipboardAllowed && Clip != null)
+                {
+                    var c = Clip.Get();
+                    if (c != null && c != lastClip && c.Length <= 1000000) { bool first = lastClip == null; lastClip = c; if (!first) SendJson("t", "clip", "text", c); }
+                }
+            }
+        }
+
+        void OnText(string s)
+        {
+            var m = Msg.FromJson(s);
+            switch (Msg.Str(m, "t"))
+            {
+                case "paired":
+                    State = ViewerState.Checking; Status = "Found them. Checking the password...";
+                    link.SendBinary(Kdf.Cat(new[] { Msg.VHello, Msg.Ver }, ecdh.Pub)); Fire(); break;
+                case "error":
+                    var r = Msg.Str(m, "reason");
+                    End(r == "not-found" ? "That code isn't open. Check the 9 digits, or ask them for a new code." : r == "busy" ? "Someone is already connected to that code." :
+                        r == "rate-limited" ? "Too many tries from here. Wait " + Math.Max(1, (Msg.Num(m, "retryAfter") + 59) / 60) + " minutes." : "The relay said no (" + r + ").", false); break;
+                case "peer-left": End("They closed the session.", false); break;
+                case "kicked": End(rejected ? "Wrong password." : "They ended the session.", false); break;
+            }
+        }
+        bool rejected;
+        void OnBinary(byte[] b)
+        {
+            if (b.Length == 0) return;
+            if (b[0] == Channel.Sealed && chan != null) { OnSealed(b); return; }
+            if (State != ViewerState.Checking) { End("Unexpected message - closed to be safe.", false); return; }
+            if (b[0] == Msg.HHello && b.Length == 83 && keys == null)
+            {
+                var hostPub = Kdf.Slice(b, 2, 65); var nonce = Kdf.Slice(b, 67, 16);
+                try { keys = SessionKeys.Derive(ecdh.SharedHash(hostPub), pwKey, code, ecdh.Pub, hostPub, nonce); }
+                catch (CryptographicException) { End("Their PC sent a bad key - closed to be safe.", false); return; }
+                link.SendBinary(Kdf.Cat(new[] { Msg.VConfirm }, keys.ConfirmV));
+                return;
+            }
+            if (b[0] == Msg.HReject) { rejected = true; End("Wrong password.", false); return; }
+            if (b[0] == Msg.HConfirm && b.Length == 33 && keys != null && chan == null)
+            {
+                if (!Kdf.Equal(Kdf.Slice(b, 1, 32), keys.ConfirmH)) { End("Couldn't verify their PC - the connection may not be safe.", false); return; }
+                chan = new Channel(keys, false); Safety = keys.Safety; State = ViewerState.Waiting;
+                Status = "Connected securely. Waiting for them to click Allow...";
+                SendJson("t", "hello", "name", name.Length > 40 ? name.Substring(0, 40) : name, "client", "app", "version", Program.Version);
+                Fire(); return;
+            }
+            End("Unexpected message - closed to be safe.", false);
+        }
+        void SendPlain(byte[] plain) { var c = chan; var l = link; if (c == null || l == null || State == ViewerState.Ended) return; l.SendSealed(() => c.Seal(plain), plain.Length + 25); }
+        void SendJson(params object[] kv) { SendPlain(Msg.JsonMsg(kv)); }
+
+        void OnSealed(byte[] b)
+        {
+            byte[] p;
+            try { p = chan.Open(b); }
+            catch (CryptographicException e) { End("A message failed its security check (" + e.Message + "), so the session was closed.", false); return; }
+            if (p.Length == 0) return;
+            if (p[0] == Msg.Frame) { OnFrame(p); return; }
+            if (p[0] == Msg.File) { Files.Chunk(p); return; }
+            if (p[0] != Msg.Json) return;
+            var m = Msg.ParseJson(p);
+            switch (Msg.Str(m, "t"))
+            {
+                case "consent":
+                    if (!Msg.Bool(m, "allowed")) { End("They said no.", false); return; }
+                    ControlAllowed = Msg.Bool(m, "control"); ClipboardAllowed = Msg.Bool(m, "clipboard"); HostName = Msg.Str(m, "host");
+                    var list = new List<MonitorInfo>();
+                    object mo; if (m.TryGetValue("monitors", out mo) && mo is System.Collections.ArrayList)
+                        foreach (var x in (System.Collections.ArrayList)mo) { var d = x as Dictionary<string, object>; if (d != null) list.Add(new MonitorInfo { W = (int)Msg.Num(d, "w"), H = (int)Msg.Num(d, "h"), Primary = Msg.Bool(d, "primary") }); }
+                    Monitors = list.ToArray();
+                    State = ViewerState.Connected; Status = "Connected."; Banner = ControlAllowed ? "" : "View only - they haven't allowed control.";
+                    Fire(); break;
+                case "control": ControlAllowed = Msg.Bool(m, "on"); Banner = ControlAllowed ? "" : "They turned off control - you can still see their screen."; Fire(); break;
+                case "clipboard": ClipboardAllowed = Msg.Bool(m, "on"); lastClip = null; Fire(); break;
+                case "clip": { var t = Msg.Str(m, "text") ?? ""; if (ClipboardAllowed && Clip != null && ClipSync) { lastClip = t; Clip.Set(t); } LastClipFromThem = t; Fire(); break; }
+                case "state":
+                    Banner = Msg.Bool(m, "secure") ? "They need to click the admin prompt themselves - Windows hides it from remote help." :
+                        Msg.Bool(m, "elevated") ? "That window runs as administrator: you can see it, but they need to click it themselves." : (ControlAllowed ? "" : "View only - they haven't allowed control.");
+                    Fire(); break;
+                case "chat": { var h = Chat; var t = Msg.Str(m, "text") ?? ""; if (h != null) h(t.Length > 2000 ? t.Substring(0, 2000) : t); break; }
+                case "pong": RttMs = (int)Math.Max(0, (long)(DateTime.UtcNow - new DateTime(1970, 1, 1)).TotalMilliseconds - Msg.Num(m, "ts")); break;
+                case "q": QualityLabel = Msg.Str(m, "label") ?? ""; Fire(); break;
+                case "bye": End(Msg.Str(m, "reason") ?? "They ended the session.", false); break;
+                default: Files.Handle(m); break;
+            }
+        }
+        public string LastClipFromThem;
+
+        void OnFrame(byte[] p)
+        {
+            FrameMsg f;
+            try { f = FrameMsg.Parse(p); } catch { return; }
+            var area = Rectangle.Empty;
+            lock (ScreenLock)
+            {
+                if (f.EncW != Screen.W || f.EncH != Screen.H) { Screen.Resize(f.EncW, f.EncH); area = new Rectangle(0, 0, f.EncW, f.EncH); }
+                Monitor = f.Mon;
+                foreach (var t in f.Tiles) { try { var r = Screen.Apply(t); area = area.IsEmpty ? r : Rectangle.Union(area, r); } catch { } }
+            }
+            Frames++; FrameBytes += p.Length;
+            SendJson("t", "ack", "seq", f.Seq);
+            var h = Painted; if (h != null && !area.IsEmpty) h(area);
+        }
+
+        // ---- the helper's actions
+        public bool CanControl { get { return State == ViewerState.Connected && ControlAllowed; } }
+        public void Move(int nx, int ny) { if (CanControl) SendPlain(Msg.Move(nx, ny)); }
+        public void Button(int b, bool down, int nx, int ny) { if (CanControl) SendPlain(Msg.Button(b, down, nx, ny)); }
+        public void Wheel(int dy, int dx) { if (CanControl) SendPlain(Msg.Wheel(dy, dx)); }
+        public void Key(int scan, bool down) { if (CanControl) SendPlain(Msg.Key(scan, down)); }
+        public void Text(string s) { if (CanControl && !string.IsNullOrEmpty(s)) SendPlain(Msg.Text(s)); }
+        public void SetMonitor(int i) { if (State == ViewerState.Connected) SendJson("t", "monitor", "i", i); }
+        public void SetQuality(string q) { if (State == ViewerState.Connected) SendJson("t", "quality", "q", q); }
+        public void SendChat(string t) { if (State == ViewerState.Connected && !string.IsNullOrWhiteSpace(t)) SendJson("t", "chat", "text", t); }
+        public void SendClip(string t) { if (State == ViewerState.Connected && ClipboardAllowed && t != null) SendJson("t", "clip", "text", t); }
+        public string SendFile(string path) { if (State != ViewerState.Connected) return "Not connected."; return Files.Offer(path); }
+
+        public void End(string reason, bool tellPeer)
+        {
+            if (Interlocked.Exchange(ref ended, 1) == 1) return;
+            if (tellPeer && chan != null) SendJson("t", "bye", "reason", "The helper ended the session.");
+            State = ViewerState.Ended; EndReason = reason; Status = reason;
+            Files.CancelAll();
+            if (link != null) link.Close(reason);
+            if (ecdh != null) ecdh.Dispose();
+            Fire();
+            var h = Ended; if (h != null) try { h(reason); } catch { }
+        }
+    }
+}

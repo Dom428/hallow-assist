@@ -1,0 +1,35 @@
+# Hallow Assist relay on your own machine (NAS, mini PC...). See NAS-DEPLOY.md in the repo.
+#
+#   docker compose up -d --build
+#
+# Then http://<this machine>:8090/healthz should answer {"ok":true,...}.
+# Your settings go in a file called .env next to this one (deploy-nas.mjs never overwrites it), e.g.
+#   PUBLIC_URL=https://assist.example.com
+services:
+  hallow-assist:
+    build: .
+    image: hallow-assist-relay:local
+    container_name: hallow-assist
+    restart: unless-stopped
+    ports:
+      - "8090:8080"
+    environment:
+      # The relay's address from anywhere (shown on its web page). Leave empty if unsure.
+      PUBLIC_URL: "${PUBLIC_URL:-}"
+      # Behind a Cloudflare Tunnel: count rate limits per real visitor (CF-Connecting-IP), trusted only from Docker networks.
+      TRUST_PROXY: "${TRUST_PROXY:-cloudflare}"
+      # Optional limits (these are the defaults):
+      # CODE_TTL_SECONDS: "600"        # an unused code stops working after 10 minutes
+      # JOIN_FAILS_PER_10_MIN: "10"    # wrong codes per address before it has to wait
+      # MAX_MESSAGE_BYTES: "4194304"   # biggest single message passed along
+      # IDLE_TIMEOUT_SECONDS: "60"     # silent connections are dropped
+      # LOG: "off"                     # no log lines at all (payloads are never logged anyway)
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.5"
