@@ -33,9 +33,23 @@ jobs:
         run: |
           & .\tests\AssistTests.exe
           if ($LASTEXITCODE -ne 0) { throw "unit tests failed" }
+      - name: Pictures of every window (made-up data)
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force snaps | Out-Null
+          $p = Start-Process .\HallowAssist.exe -ArgumentList '--snap', "$PWD\snaps" -PassThru -Wait
+          if ($p.ExitCode -ne 0) { throw "--snap failed ($($p.ExitCode))" }
+          if (-not (Get-ChildItem snaps -Filter *.png)) { throw "--snap made no pictures" }
+          Get-ChildItem snaps | Format-Table Name, Length
       - name: Keep the exe
         uses: actions/upload-artifact@v4
         with:
           name: HallowAssist
           path: HallowAssist.exe
+          retention-days: 7
+      - name: Keep the pictures
+        uses: actions/upload-artifact@v4
+        with:
+          name: snaps
+          path: snaps
           retention-days: 7
