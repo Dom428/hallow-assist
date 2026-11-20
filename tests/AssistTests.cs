@@ -269,7 +269,7 @@ namespace HallowAssist.Tests
         {
             new System.Threading.Thread(() => { foreach (var m in q.GetConsumingEnumerable()) { if (delayMs > 0) System.Threading.Thread.Sleep(delayMs); var b = m(); lock (Out) Out.Add(b); } }) { IsBackground = true }.Start();
         }
-        public void SendSealed(Func<byte[]> make, int sizeHint) { System.Threading.Interlocked.Add(ref queued, sizeHint); q.Add(() => { System.Threading.Interlocked.Add(ref queued, -sizeHint); return make(); }); }
+        public void SendSealed(Func<byte[]> make, int sizeHint) { System.Threading.Interlocked.Add(ref queued, sizeHint); q.Add(() => { var b = make(); System.Threading.Interlocked.Add(ref queued, -sizeHint); return b; }); }
         public long Queued { get { return System.Threading.Interlocked.Read(ref queued); } }
         public List<int> Numbers() { lock (Out) return Out.Select(b => BitConverter.ToInt32(b, 0)).ToList(); }
     }

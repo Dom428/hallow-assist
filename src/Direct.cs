@@ -102,7 +102,7 @@ namespace HallowAssist
         {
             if (closed != 0) return;
             Interlocked.Add(ref queuedBytes, sizeHint);
-            try { queue.Add(() => { Interlocked.Add(ref queuedBytes, -sizeHint); return make(); }); } catch { }
+            try { queue.Add(() => { var b = make(); Interlocked.Add(ref queuedBytes, -sizeHint); return b; }); } catch { }
         }
         void SendLoop()
         {

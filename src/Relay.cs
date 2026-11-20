@@ -34,7 +34,8 @@ namespace HallowAssist
         public void SendText(string s) { Enqueue(Encoding.UTF8.GetBytes(s), false, null); }
         public void SendBinary(byte[] b) { Enqueue(b, true, null); }
         // seal at send time, in queue order (the counter order = the wire order)
-        public void SendSealed(Func<byte[]> make, int sizeHint) { Interlocked.Add(ref queuedBytes, sizeHint); Enqueue(null, true, () => { Interlocked.Add(ref queuedBytes, -sizeHint); return make(); }); }
+        // v1.3: counted as gone only AFTER it is sealed, so "nothing queued" really means every counter has been taken
+        public void SendSealed(Func<byte[]> make, int sizeHint) { Interlocked.Add(ref queuedBytes, sizeHint); Enqueue(null, true, () => { var b = make(); Interlocked.Add(ref queuedBytes, -sizeHint); return b; }); }
         void Enqueue(byte[] b, bool bin, Func<byte[]> make)
         {
             if (closed != 0) return;
