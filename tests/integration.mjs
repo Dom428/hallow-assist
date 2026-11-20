@@ -59,7 +59,8 @@ async function connectViewer(code, password, name = 'Test Helper') {
 }
 
 await step('family link: ping, status, menu; no session at start; unattended off by default; not starting with Windows', async () => {
-  assert.deepEqual(okJson(cmd('host', 'ping')), { app: 'Assist', version: '1.0' });
+  const appVersion = fs.readFileSync(path.join(ROOT, 'src', 'App.cs'), 'utf8').match(/Version = "([^"]+)";/)[1];
+  assert.deepEqual(okJson(cmd('host', 'ping')), { app: 'Assist', version: appVersion });
   const s = status('host');
   assert.equal(s.app, 'Assist'); assert.equal(s.session, 'none'); assert.equal(s.unattended, false); assert.equal(s.test.startsWithWindows, false);
   const m = okJson(cmd('host', 'menu'));

@@ -30,6 +30,9 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - name: Build the app and the unit tests
         shell: powershell
         run: ./build.ps1 -Tests
@@ -38,6 +41,19 @@ jobs:
         run: |
           & .\tests\AssistTests.exe
           if ($LASTEXITCODE -ne 0) { throw "unit tests failed" }
+      - name: Integration tests (local relay, two app copies in test mode, the browser viewer in headless Edge)
+        shell: powershell
+        run: |
+          node tests/integration.mjs "$PWD\tests\out"
+          if ($LASTEXITCODE -ne 0) { throw "integration tests failed" }
+      - name: Keep the integration results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration
+          path: tests/out/*.txt
+          retention-days: 7
+          if-no-files-found: ignore
       - name: Pictures of every window (made-up data)
         shell: powershell
         run: |
