@@ -120,6 +120,22 @@ namespace HallowAssist
                     save.HorizontalAlignment = HorizontalAlignment.Left; save.Margin = new Thickness(0, 10, 0, 0);
                     helpSomeone.Children.Add(save);
                 }
+                else
+                {
+                    // already one of Your PCs, password typed this time: offer to remember it (only after it worked)
+                    var known = c.S.FindPc(v.Code);
+                    if (v.State == ViewerState.Connected && known != null && known.Key == null && !v.UsedSavedKey && !v.OneTimePassword && v.PasswordKey != null)
+                    {
+                        var rem = Ui.Btn("Remember the password for " + known.Name, () =>
+                        {
+                            if (MessageBox.Show(this, "Remember the password for " + known.Name + " on this PC?\n\nIt's kept as a key made from it, encrypted for your Windows account - but anyone who can sign in as you here could then connect to " + known.Name + ".",
+                                "Hallow Assist", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+                            c.SavePc(known.Name, known.Code, v.PasswordKey); Say("Password remembered for " + known.Name + ".");
+                        });
+                        rem.HorizontalAlignment = HorizontalAlignment.Left; rem.Margin = new Thickness(0, 10, 0, 0);
+                        helpSomeone.Children.Add(rem);
+                    }
+                }
                 return;
             }
             AddYourPcs(v);
