@@ -725,7 +725,7 @@ namespace HallowAssist
             switch (cmd)
             {
                 case "test-gethelp": GetHelp(); return "ok";
-                case "test-direct": DirectNet.TestLoopback = a.Length > 0 && a[0] == "on"; return "ok";
+                case "test-direct": { var on = a.Length > 0 && a[0] == "on"; DirectNet.TestLoopback = on; S.DirectOff = !on; S.Save(); return "ok"; }   // on = direct over 127.0.0.1, anything else = relay only
                 case "test-view-draw": { var p = a.Select(x => int.Parse(x)).ToArray(); Viewer.SendDraw(4242, p); return "ok"; }
                 case "test-code": return host == null || host.Code == null ? "error no code yet" : "ok " + Family.Json(new Dictionary<string, object> { { "code", host.Code }, { "password", host.Password } });
                 case "test-consent":

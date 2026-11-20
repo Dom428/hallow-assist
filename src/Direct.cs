@@ -83,7 +83,7 @@ namespace HallowAssist
         public const int MaxMessage = 16 * 1024 * 1024;
         readonly Socket sock; readonly NetworkStream stream;
         readonly BlockingCollection<Func<byte[]>> queue = new BlockingCollection<Func<byte[]>>();
-        long queuedBytes; int closed;
+        long queuedBytes; int closed; readonly ManualResetEvent sendDone = new ManualResetEvent(false);
         public event Action<byte[]> Frame;
         public event Action<string> Closed;
         public long BytesIn, BytesOut;
@@ -117,7 +117,10 @@ namespace HallowAssist
                 }
             }
             catch (Exception e) { Close("direct send: " + e.Message); }
+            finally { sendDone.Set(); }
         }
+        // lets what's already queued (e.g. "bye") go out before the link closes - up to ms
+        public void Drain(int ms) { try { queue.CompleteAdding(); } catch { } sendDone.WaitOne(ms); }
         void ReceiveLoop()
         {
             try

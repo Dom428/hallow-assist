@@ -48,6 +48,8 @@ const hostSealed = () => forwarded.filter(f => f.role === 'host' && f.data[0] ==
 
 launch('host'); launch('viewer');
 await until(() => cmd('host', 'ping').startsWith('ok') && cmd('viewer', 'ping').startsWith('ok'), 15000, 'both apps');
+// the steps below check what passes through the relay, so they run relay-only; the direct step switches direct on
+cmd('host', 'test-direct relay'); cmd('viewer', 'test-direct relay');
 
 async function newHostSession() {
   if (T('host').host && T('host').host !== 'Ended') { cmd('host', 'test-host-end'); await sleep(300); }
@@ -388,8 +390,11 @@ await step('direct connection (v1.3): on the same network the PCs talk directly 
     const s0 = T('host').drawStrokes; cmd('viewer', 'test-view-draw 100 100 30000 30000'); await until(() => T('host').drawStrokes > s0, 5000, 'drawing reached the host');
     assert.equal(relayedSealed(), before, 'nothing sealed went through the relay after the switch');
     cmd('viewer', 'test-view-monitor 0'); await until(() => T('viewer').monitor === 0, 5000, 'back to monitor 1');
-    cmd('host', 'test-host-end'); await until(() => T('viewer').viewer === 'Ended', 8000, 'viewer told the session ended');
-  } finally { cmd('host', 'test-direct off'); cmd('viewer', 'test-direct off'); }
+    // ending from the helper's side over the direct link: the "bye" arrives before the link closes
+    cmd('viewer', 'test-view-end');
+    await until(() => T('host').host === 'Ended', 8000, 'host ended');
+    assert.match(T('host').endReason, /helper ended/i);
+  } finally { cmd('host', 'test-direct relay'); cmd('viewer', 'test-direct relay'); }
 });
 
 await step('closing the app (host) ends a connected session; the helper is told', async () => {

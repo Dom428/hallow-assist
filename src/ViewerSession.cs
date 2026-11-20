@@ -242,7 +242,7 @@ namespace HallowAssist
             if (tellPeer && chan != null) SendJson("t", "bye", "reason", "The helper ended the session.");
             State = ViewerState.Ended; EndReason = reason; Status = reason;
             Files.CancelAll();
-            var dl = direct; direct = null; if (dl != null) dl.Close("session ended");
+            var dl = direct; direct = null; if (dl != null) { dl.Drain(1500); dl.Close("session ended"); }   // "bye" first, then the relay
             if (link != null) link.Close(reason);
             if (ecdh != null) ecdh.Dispose();
             Fire();

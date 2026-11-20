@@ -324,7 +324,7 @@ namespace HallowAssist
             lock (gate) { State = HostState.Ended; EndReason = reason; ReleaseAll(); Files.CancelAll(); }
             Crash.Secrets = new string[0];
             Password = null;
-            var dl = direct; direct = null; if (dl != null) dl.Close("session ended");
+            var dl = direct; direct = null; if (dl != null) { dl.Drain(1500); dl.Close("session ended"); }   // "bye" first, then the relay
             if (link != null) link.Close(reason);
             Fire();
             var h = Ended; if (h != null) try { h(reason); } catch { }
