@@ -180,3 +180,19 @@ test('a host slowed down for a stuck viewer is read again once that viewer leave
   assert.equal((await h.next(2000)).t, 'pong');
   await r.close();
 });
+
+test('status: only unattended codes are reported (online / busy), never one-time codes; it counts towards the rate limit', async () => {
+  const { r, url } = await start({ joinLimit: 3 });
+  const secret = 'ab'.repeat(32), pcCode = persistentCode(secret);
+  const pc = await client(url); pc.json({ t: 'host', persist: secret }); assert.equal((await pc.next()).code, pcCode);
+  const once = await client(url); once.json({ t: 'host' }); const oneTime = (await once.next()).code;
+  const ask = async codes => { const q = await client(url); q.json({ t: 'status', codes }); const m = await q.next(); await q.closedP; return m; };
+  let m = await ask([pcCode, oneTime, '123456789', 'junk']);
+  assert.deepEqual(m, { t: 'status', online: [pcCode], busy: [] });
+  const v = await client(url); v.json({ t: 'join', code: pcCode }); await v.next(); await pc.next();
+  m = await ask([pcCode.slice(0, 3) + ' ' + pcCode.slice(3)]);
+  assert.deepEqual(m, { t: 'status', online: [], busy: [pcCode] });
+  m = await ask([pcCode]);
+  assert.equal(m.reason, 'rate-limited');
+  await r.close();
+});

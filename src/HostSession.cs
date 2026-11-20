@@ -44,6 +44,9 @@ namespace HallowAssist
         public event Action<string> Note;                                   // a line for the bar / log
         public event Action<string> Ended;
         public event Action WrongPassword;
+        public event Action<MonitorInfo, long, int[]> Drawing;   // v1.2: the helper draws on this screen (monitor, stroke id, points)
+        public event Action DrawClear;
+        public event Action<string> RestartRequested;             // v1.2: unattended only - the helper restarts this PC
 
         public HostSession(HostOptions opts)
         {
@@ -207,6 +210,21 @@ namespace HallowAssist
                 case "chat": { var text = Msg.Str(m, "text") ?? ""; if (text.Length > 2000) text = text.Substring(0, 2000); var h = Chat; if (h != null) h(text); break; }
                 case "clip": if (Clipboard && o.Clip != null) { var text = Msg.Str(m, "text") ?? ""; if (text.Length <= 1000000) { lastClip = text; o.Clip.Set(text); Say("The helper put text on your clipboard."); } } break;
                 case "bye": End(Msg.Str(m, "reason") ?? "The helper ended the session.", false); break;
+                // v1.2: drawing is allowed in view-only sessions too - it only shows lines, it can't click anything
+                case "draw":
+                    {
+                        var pts = Draw.Points(m); if (pts == null) break;
+                        var mons = o.Screen.Monitors(); if (mons.Length == 0) break;
+                        var mi = (int)Msg.Num(m, "mon"); if (mi < 0 || mi >= mons.Length) mi = monitor;
+                        var h = Drawing; if (h != null) h(mons[Math.Min(mi, mons.Length - 1)], Msg.Num(m, "id"), pts);
+                        break;
+                    }
+                case "draw-clear": { var h = DrawClear; if (h != null) h(); break; }
+                // v1.2: only your own PCs (unattended access) can be restarted from the helper's side
+                case "restart":
+                    if (!o.Unattended) { SendJson("t", "note", "text", "Restarting is only for PCs with unattended access."); break; }
+                    { SendJson("t", "restarting"); Say((HelperName ?? "The helper") + " is restarting this PC."); var h = RestartRequested; if (h != null) h(HelperName); }
+                    break;
                 default: Files.Handle(m); break;
             }
         }
@@ -227,7 +245,7 @@ namespace HallowAssist
                     Control = a.Control; Clipboard = a.Clipboard; State = HostState.Connected;
                     WrongPasswords = 0;   // v1.1: only wrong tries in a row count towards the unattended pause
                     var mons = o.Screen.Monitors();
-                    SendJson("t", "consent", "allowed", true, "control", Control, "clipboard", Clipboard,
+                    SendJson("t", "consent", "allowed", true, "control", Control, "clipboard", Clipboard, "unattended", o.Unattended,
                         "monitors", mons.Select((mm, i) => new Dictionary<string, object> { { "i", i }, { "w", mm.W }, { "h", mm.H }, { "primary", mm.Primary } }).ToArray());
                     monitor = Math.Max(0, Array.FindIndex(mons, mm => mm.Primary));
                     keyframe = true; inflight.Clear();

@@ -162,6 +162,29 @@ namespace HallowAssist.Tests
         {
             var s = new AssistSettings();
             Ok(!s.Unattended && s.UnattendedSecret == null, "unattended access is off by default");
+            // v1.2: online status, history, drawing, restart
+            {
+                var st = RelayStatus.Parse(Msg.FromJson("{\"t\":\"status\",\"online\":[\"715390246\"],\"busy\":[\"302118457\"]}"), new[] { "715390246", "302118457", "111222333" });
+                Ok(st["715390246"] == "online" && st["302118457"] == "busy" && st["111222333"] == "offline", "online status: online, busy and offline are told apart");
+                Ok(RelayStatus.Query(new Uri("ws://127.0.0.1:9/ws"), new[] { "715390246" }, 1500) == null && RelayStatus.Query(new Uri("ws://127.0.0.1:9/ws"), new string[0]) == null, "online status: no relay = unknown, not offline");
+                var hp = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "assist-history-" + Guid.NewGuid().ToString("N") + ".json");
+                var t0 = new DateTime(2026, 11, 20, 14, 2, 0);
+                for (int i = 0; i < History.Max + 5; i++) History.Add(new HistoryEntry { Start = t0.AddMinutes(i).ToString("o"), End = t0.AddMinutes(i + 12).ToString("o"), Helper = "Helper " + i, Client = "app" }, hp);
+                var h = History.Load(hp);
+                Ok(h.Count == History.Max && h[0].Helper == "Helper " + (History.Max + 4) && h[h.Count - 1].Helper == "Helper 5", "history: newest first, at most 200");
+                History.Clear(hp); Ok(History.Load(hp).Count == 0 && History.Load(hp + ".missing").Count == 0, "history: clear, and a missing file is empty");
+                try { System.IO.File.Delete(hp); } catch { }
+                var line = History.Describe(new HistoryEntry { Start = t0.ToString("o"), End = t0.AddMinutes(75).ToString("o"), Helper = "Dom", Client = "browser", ControlAllowed = true, InputUsed = true, FilesReceived = 2, Unattended = true }, t0.AddHours(3));
+                Ok(line.StartsWith("Today 14:02") && line.Contains("Dom (browser)") && line.Contains("1 h 15 min") && line.Contains("used your mouse and keyboard") && line.Contains("2 files received") && line.Contains("unattended"), "history: one readable line per session");
+                Ok(History.Describe(new HistoryEntry { Start = t0.ToString("o"), End = t0.AddSeconds(20).ToString("o"), Helper = "Sam" }, t0.AddDays(1)).StartsWith("Yesterday") , "history: yesterday and short sessions");
+                Func<string, int[]> pts = j => Draw.Points(Msg.FromJson(j));
+                var good = pts("{\"t\":\"draw\",\"pts\":[0,0,70000,-5,100,200]}");
+                Ok(good != null && good.Length == 6 && good[2] == 65535 && good[3] == 0, "drawing: points are clamped to the screen");
+                var tooMany = "{\"pts\":[" + string.Join(",", Enumerable.Repeat("1", Draw.MaxPoints * 2 + 2)) + "]}";
+                Ok(pts("{\"pts\":[1,2,3]}") == null && pts("{\"pts\":\"x\"}") == null && pts("{}") == null && pts(tooMany) == null && pts("{\"pts\":[1,\"a\"]}") == null, "drawing: odd, missing, junk or oversized strokes are refused");
+                var ra = Power.RestartArgs("Dom\" & calc.exe /c \"");
+                Ok(ra == "/r /t 10 /c \"Hallow Assist: Dom  calc.exe c is restarting this PC.\"" && !ra.Substring(0, ra.Length - 1).Substring(16).Contains("\"") && Power.RestartArgs(null).Contains("your helper"), "restart: the helper's name can't break out of the shutdown message");
+            }
             // v1.1: Your PCs
             {
                 var raw = new List<SavedPc> { new SavedPc { Name = "Den", Code = "715 390 246" }, new SavedPc { Name = "Dup", Code = "715390246" }, new SavedPc { Name = "Bad", Code = "12345" }, null,

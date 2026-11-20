@@ -81,7 +81,7 @@ namespace HallowAssist
             var bar = new HelpBar(); bar.Update("Dom", true, false, false, "4827", true); Snap.Save(bar, Path.Combine(dir, "bar.png"), 860, 0);
             var bar2 = new HelpBar(); bar2.Update("Dom", false, true, false, "4827", true); Snap.Save(bar2, Path.Combine(dir, "bar-viewonly.png"), 860, 0);
             var bar3 = new HelpBar(); bar3.Update("Dom", true, false, true, "4827", true); Snap.Save(bar3, Path.Combine(dir, "bar-unattended.png"), 900, 0);
-            var vs = new ViewerSession(new Uri("wss://assist.example.com/ws"), "481207365", "K7MX2P", "Dom");
+            var vs = new ViewerSession(new Uri("wss://assist.example.com/ws"), "481207365", "K7MX2P", "Dom") { HostUnattended = true };
             var vw = new ViewerWindow(vs, "481207365"); vw.SnapFill(); Snap.Save(vw, Path.Combine(dir, "viewer.png"), 1180, 760);
             var vs2 = new ViewerSession(new Uri("wss://assist.example.com/ws"), "481207365", "K7MX2P", "Dom") { Safety = "4827", State = ViewerState.Waiting, Status = "Connected securely. Waiting for them to click Allow..." };
             var vw2 = new ViewerWindow(vs2, "481207365"); vw2.Refresh(); Snap.Save(vw2, Path.Combine(dir, "viewer-waiting.png"), 1180, 560);
@@ -91,7 +91,14 @@ namespace HallowAssist
             var sd = new SavePcDialog(null, true); sd.SnapFill("Living room PC", "715 390 246"); Snap.Save(sd, Path.Combine(dir, "save-pc.png"), 480, 0);
             c.S.RelayUrl = "https://assist.example.com"; c.S.Unattended = false;
             c.S.Pcs = AssistSettings.CleanPcs(new System.Collections.Generic.List<SavedPc> { new SavedPc { Name = "Living room PC", Code = "715390246", Key = "x", LastUsed = DateTime.Now.ToString("o") }, new SavedPc { Name = "Mum's laptop", Code = "302118457" } });
+            c.PcStatus = new Dictionary<string, string> { { "715390246", "online" }, { "302118457", "offline" } };
             main.Build(); Snap.Save(main, Path.Combine(dir, "main-yourpcs.png"), 860, 0);
+            var now = DateTime.Now;
+            var hist = new List<HistoryEntry> {
+                new HistoryEntry { Start = now.AddMinutes(-42).ToString("o"), End = now.AddMinutes(-18).ToString("o"), Helper = "Dom", Client = "app", ControlAllowed = true, InputUsed = true, FilesReceived = 1 },
+                new HistoryEntry { Start = now.AddDays(-1).AddHours(-3).ToString("o"), End = now.AddDays(-1).AddHours(-3).AddMinutes(6).ToString("o"), Helper = "Dom", Client = "browser", Unattended = true, ControlAllowed = true, InputUsed = true },
+                new HistoryEntry { Start = now.AddDays(-9).ToString("o"), End = now.AddDays(-9).AddMinutes(3).ToString("o"), Helper = "Sam", Client = "browser", ControlAllowed = false } };
+            Snap.Save(new HistoryWindow(hist, () => { }), Path.Combine(dir, "history.png"), 620, 0);
             var ud = new UnattendedDialog(); ud.SnapFill("Use at least 12 characters."); Snap.Save(ud, Path.Combine(dir, "unattended.png"), 480, 0);
             var chat = new ChatWindow("Dom"); chat.Add("Them", "Can you see the printer settings?", false); chat.Add("You", "Yes - click Devices on the left.", true); Snap.Save(chat, Path.Combine(dir, "chat.png"), 380, 420);
             Snap.Save(CrashNotice.Make(Path.Combine(dir, "example.txt")), Path.Combine(dir, "crash.png"), 440, 0);
@@ -112,6 +119,12 @@ namespace HallowAssist
         // headless test mode: answers that a person would give, through the test pipe
         Action<ConsentAnswer> pendingConsent; readonly Queue<Action<bool>> pendingFiles = new Queue<Action<bool>>();
         readonly List<string> log = new List<string>();
+        // v1.2
+        DrawOverlay overlay; public int DrawStrokes;
+        HistoryEntry histEntry; HostSession histHost; long histInputStart; int histFiles;
+        public Dictionary<string, string> PcStatus = new Dictionary<string, string>(); bool statusBusy;
+        class RestartWait { public string Code, Name; public byte[] Key; public DateTime Since; public bool SawOffline; }
+        RestartWait restartWait;
 
         public Controller(bool tray, bool snapMode = false)
         {
@@ -134,7 +147,8 @@ namespace HallowAssist
             hotkeyWin = new HwndSource(new HwndSourceParameters("HallowAssistHotkey") { ParentWindow = new IntPtr(-3), Width = 0, Height = 0 });
             hotkeyWin.AddHook(HotkeyHook);
             WriteStatus();
-            var st = new DispatcherTimer { Interval = TimeSpan.FromSeconds(60) }; st.Tick += (s, e) => WriteStatus(); st.Start();
+            var st = new DispatcherTimer { Interval = TimeSpan.FromSeconds(60) }; st.Tick += (s, e) => { WriteStatus(); RefreshPcStatus(); }; st.Start();
+            var rt = new DispatcherTimer { Interval = TimeSpan.FromSeconds(10) }; rt.Tick += (s, e) => CheckRestartWait(); rt.Start();
             if (S.Unattended) RetryUnattended();
             if (!tray && !AssistSettings.Headless) ShowMain();
             if (!AssistSettings.Headless) ui.BeginInvoke(new Action(ShowCrashNotice), DispatcherPriority.ApplicationIdle);
@@ -146,6 +160,7 @@ namespace HallowAssist
             if (AssistSettings.Headless) return;
             if (main == null) main = new MainWindow(this);
             main.Show(); if (main.WindowState == WindowState.Minimized) main.WindowState = WindowState.Normal; main.Activate();
+            RefreshPcStatus();
         }
         // closing the main window: stays in the tray only for unattended access or a running session; otherwise quits
         public void MainClosing()
@@ -163,6 +178,7 @@ namespace HallowAssist
         public void Quit()
         {
             if (quitting) return; quitting = true;
+            FinishHistory();
             if (host != null) host.End("Hallow Assist was closed.", true);
             if (Viewer != null) Viewer.End("Hallow Assist was closed.", true);
             UnregisterHotkey();
@@ -201,6 +217,17 @@ namespace HallowAssist
                 new PromptWindow((h.HelperName ?? "Your helper") + " wants to send you a file", name + " (" + Transfers.Size(size) + "). It goes into " + h.Files.Folder + ". Only accept files you expect." + Transfers.Warning(name), "Accept", "Decline", answer).Show();
             }));
             h.Ended += r => ui.BeginInvoke(new Action(() => HostEnded(h, r)));
+            // v1.2: drawing, restart, files for the history
+            h.Drawing += (m, id, pts) => ui.BeginInvoke(new Action(() =>
+            {
+                if (h != host) return; DrawStrokes++;
+                if (AssistSettings.Headless) return;
+                if (overlay == null) overlay = new DrawOverlay();
+                overlay.Add(m, id, pts);
+            }));
+            h.DrawClear += () => ui.BeginInvoke(new Action(() => { if (overlay != null) overlay.Clear(); }));
+            h.RestartRequested += who => ui.BeginInvoke(new Action(() => RestartPc(h, who)));
+            h.Files.Received += p => ui.BeginInvoke(new Action(() => { if (h == histHost) histFiles++; }));
             h.WrongPassword += () => ui.BeginInvoke(new Action(() => { if (h.Unattended && h.WrongPasswords >= 5) { S.UnattendedLockedUntil = DateTime.Now.AddMinutes(15).ToString("o"); S.Save(); } }));
             h.Start();
             HostChanged(h);
@@ -208,6 +235,8 @@ namespace HallowAssist
         void HostChanged(HostSession h)
         {
             if (h != host && h != SnapHost) return;
+            if (h != SnapHost) TrackHistory(h);
+            if (h.State != HostState.Connected && overlay != null) { overlay.Close(); overlay = null; }
             bool live = h.State == HostState.Asking || h.State == HostState.Connected;
             if (live) RegisterHotkey(); else if (Viewer == null || true) UnregisterHotkey();
             if (h.State != HostState.Asking && consent != null) { consent.Cancel(); consent = null; }
@@ -371,8 +400,105 @@ namespace HallowAssist
             pc.Name = name; pc.Key = key == null ? null : AssistSettings.ProtectPcKey(key);
             S.Pcs = AssistSettings.CleanPcs(S.Pcs); S.Save();
             if (main != null) main.RefreshHelpSomeone();
+            RefreshPcStatus();
         }
         public void ForgetPc(string code) { var pc = S.FindPc(code); if (pc == null) return; S.Pcs.Remove(pc); S.Save(); if (main != null) main.RefreshHelpSomeone(); }
+        // ---------------- v1.2: connection history (on the PC being helped)
+        void TrackHistory(HostSession h)
+        {
+            if (h.State == HostState.Connected)
+            {
+                if (histEntry == null || histHost != h || (histEntry.Helper != h.HelperName))
+                {
+                    FinishHistory();
+                    histEntry = new HistoryEntry { Start = DateTime.Now.ToString("o"), Helper = h.HelperName, Client = h.HelperClient, Unattended = h.Unattended, ControlAllowed = h.Control };
+                    histHost = h; histInputStart = h.InputEvents; histFiles = 0;
+                }
+                else if (h.Control) histEntry.ControlAllowed = true;
+            }
+            else if (histEntry != null && histHost == h) FinishHistory();
+        }
+        void FinishHistory()
+        {
+            var e = histEntry; var h = histHost; histEntry = null; histHost = null;
+            if (e == null || h == null) return;
+            e.End = DateTime.Now.ToString("o"); e.InputUsed = h.InputEvents > histInputStart; e.FilesReceived = histFiles;
+            History.Add(e);
+        }
+        public void ShowHistory()
+        {
+            var w = new HistoryWindow(History.Load(), () => History.Clear()) { Owner = main };
+            w.ShowDialog();
+        }
+
+        // ---------------- v1.2: restart (unattended PCs only - the helper's side asked for it)
+        void RestartPc(HostSession h, string who)
+        {
+            if (h != host || !h.Unattended || h.State != HostState.Connected) return;
+            var args = Power.RestartArgs(who);
+            Log("restart requested by " + (who ?? "the helper"));
+            if (AssistSettings.TestDir != null) { try { File.WriteAllText(Path.Combine(AssistSettings.Dir, "restart-requested.txt"), args); } catch { } return; }   // tests never restart the PC
+            FinishHistory();
+            try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("shutdown.exe", args) { UseShellExecute = false, CreateNoWindow = true }); }
+            catch (Exception e) { Log("restart failed: " + e.Message); }
+        }
+
+        // ---------------- v1.2: after a restart, wait for that PC to come back online, then connect again by itself
+        void BeginRestartWait(ViewerSession v)
+        {
+            restartWait = new RestartWait { Code = v.Code, Key = v.PasswordKey, Name = v.HelperName, Since = DateTime.Now };
+            var pc = S.FindPc(v.Code);
+            if (main != null) main.Say("Restarting " + (pc != null ? pc.Name : Ui.FormatCode(v.Code)) + " - Hallow Assist connects again when it's back (up to 6 minutes).");
+        }
+        void CheckRestartWait()
+        {
+            var w = restartWait; if (w == null || statusBusy) return;
+            var uri = AssistSettings.WsUri(S.RelayUrl);
+            var pc = S.FindPc(w.Code); var label = pc != null ? pc.Name : Ui.FormatCode(w.Code);
+            if (uri == null || quitting) { restartWait = null; return; }
+            if ((DateTime.Now - w.Since).TotalMinutes > 6)
+            {
+                restartWait = null;
+                if (main != null) { main.RefreshHelpSomeone(); main.Say(label + " didn't come back within 6 minutes. If Windows is waiting for someone to sign in, Hallow Assist starts after that.", Ui.Amber); }
+                return;
+            }
+            if ((DateTime.Now - w.Since).TotalSeconds < 20) return;   // it's still shutting down
+            statusBusy = true;
+            new Thread(() =>
+            {
+                var r = RelayStatus.Query(uri, new[] { w.Code });
+                ui.BeginInvoke(new Action(() =>
+                {
+                    statusBusy = false;
+                    if (restartWait != w || r == null) return;
+                    string st; r.TryGetValue(w.Code, out st);
+                    if (st == "offline") w.SawOffline = true;
+                    // only after it was seen gone (or 2 minutes passed): before that, "online" is still the old session
+                    if (st == "online" && (w.SawOffline || (DateTime.Now - w.Since).TotalMinutes >= 2) && (Viewer == null || Viewer.State == ViewerState.Ended))
+                    {
+                        restartWait = null;
+                        if (main != null) main.Say(label + " is back - connecting.");
+                        var u2 = AssistSettings.WsUri(S.RelayUrl); if (u2 != null) StartViewer(new ViewerSession(u2, w.Code, w.Key, w.Name), w.Code);
+                    }
+                }));
+            }) { IsBackground = true, Name = "restart wait" }.Start();
+        }
+        public bool WaitingForRestart { get { return restartWait != null; } }
+        public void CancelRestartWait() { restartWait = null; if (main != null) main.Say("Stopped waiting."); }
+
+        // ---------------- v1.2: online dots for Your PCs (only while the main window is open)
+        public void RefreshPcStatus()
+        {
+            var uri = AssistSettings.WsUri(S.RelayUrl);
+            if (statusBusy || uri == null || main == null || !main.IsVisible || S.Pcs.Count == 0 || snap) return;
+            statusBusy = true; var codes = S.Pcs.Select(p => p.Code).ToList();
+            new Thread(() =>
+            {
+                var r = RelayStatus.Query(uri, codes);
+                ui.BeginInvoke(new Action(() => { statusBusy = false; PcStatus = r ?? new Dictionary<string, string>(); if (main != null) main.ShowPcStatus(); }));
+            }) { IsBackground = true, Name = "pc status" }.Start();
+        }
+
         static DateTime Parse(string iso) { DateTime d; return DateTime.TryParse(iso, null, System.Globalization.DateTimeStyles.RoundtripKind, out d) ? d : DateTime.MinValue; }
         void StartViewer(ViewerSession v, string code)
         {
@@ -391,10 +517,11 @@ namespace HallowAssist
             {
                 Log("viewer ended: " + r);
                 // v1.1: a remembered key that no longer works (the unattended password was changed there) is forgotten
+                if (v.Restarting && v.PasswordKey != null) BeginRestartWait(v);
                 if (v.UsedSavedKey && v.WrongPassword) { var pc = S.FindPc(v.Code); if (pc != null) { pc.Key = null; S.Save(); if (main != null) main.Say("The remembered password for " + pc.Name + " didn't work any more, so it was forgotten. Type the password to connect.", Ui.Amber); } }
                 if (main != null) main.RefreshHelpSomeone(); WriteStatus();
             }));
-            if (!AssistSettings.Headless) { viewerWin = new ViewerWindow(v, code); viewerWin.Show(); }
+            if (!AssistSettings.Headless) { if (viewerWin != null && viewerWin.IsVisible && restartWait == null) { var old = viewerWin; viewerWin = null; old.Close(); } viewerWin = new ViewerWindow(v, code); viewerWin.Show(); }
             v.Start();
             if (main != null) main.RefreshHelpSomeone();
         }

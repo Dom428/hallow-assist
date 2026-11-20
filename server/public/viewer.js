@@ -100,6 +100,7 @@ function updateButtons() {
   $('bControl').textContent = allowed.control ? (controlOn ? 'Control on' : 'Control off') : 'View only';
   $('bClip').classList.toggle('hidden', !allowed.clipboard);
   $('bKeys').disabled = !allowed.control;
+  $('bDraw').disabled = st.state !== 'connected';
 }
 const canControl = () => allowed.control && controlOn && st.state === 'connected';
 $('bControl').onclick = () => { controlOn = !controlOn; updateButtons(); };
@@ -161,9 +162,9 @@ function button(btn, down, x, y) { if (!canControl()) return; const [nx, ny] = n
 function click(btn, x, y) { move(x, y, true); button(btn, true, x, y); button(btn, false, x, y); }
 
 // mouse (desktop and TV browsers)
-canvas.addEventListener('pointermove', e => { if (e.pointerType === 'mouse') move(e.clientX, e.clientY); });
-canvas.addEventListener('pointerdown', e => { if (e.pointerType !== 'mouse') return; canvas.focus(); e.preventDefault(); move(e.clientX, e.clientY, true); button(e.button === 2 ? 1 : e.button === 1 ? 2 : 0, true, e.clientX, e.clientY); });
-canvas.addEventListener('pointerup', e => { if (e.pointerType !== 'mouse') return; e.preventDefault(); button(e.button === 2 ? 1 : e.button === 1 ? 2 : 0, false, e.clientX, e.clientY); });
+canvas.addEventListener('pointermove', e => { if (drawMode) return; if (e.pointerType === 'mouse') move(e.clientX, e.clientY); });
+canvas.addEventListener('pointerdown', e => { if (drawMode || e.pointerType !== 'mouse') return; canvas.focus(); e.preventDefault(); move(e.clientX, e.clientY, true); button(e.button === 2 ? 1 : e.button === 1 ? 2 : 0, true, e.clientX, e.clientY); });
+canvas.addEventListener('pointerup', e => { if (drawMode || e.pointerType !== 'mouse') return; e.preventDefault(); button(e.button === 2 ? 1 : e.button === 1 ? 2 : 0, false, e.clientX, e.clientY); });
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 canvas.addEventListener('wheel', e => { e.preventDefault(); if (!canControl()) return; const notch = v => Math.max(-32767, Math.min(32767, Math.round(-v / (e.deltaMode === 1 ? 3 : 100) * 120))); send(P.input(P.IN.WHEEL, notch(e.deltaY), -notch(e.deltaX))); }, { passive: false });
 
@@ -173,6 +174,7 @@ const mid = t => [(t[0].clientX + t[1].clientX) / 2, (t[0].clientY + t[1].client
 const dist = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
 canvas.addEventListener('touchstart', e => {
   e.preventDefault();
+  if (drawMode) return;
   const t = e.touches;
   if (t.length === 1) {
     const x = t[0].clientX, y = t[0].clientY;
@@ -185,6 +187,7 @@ canvas.addEventListener('touchstart', e => {
 }, { passive: false });
 canvas.addEventListener('touchmove', e => {
   e.preventDefault();
+  if (drawMode) return;
   if (!touch) return;
   const t = e.touches;
   if (touch.mode === 'tap' || touch.mode === 'drag') {
@@ -203,6 +206,7 @@ canvas.addEventListener('touchmove', e => {
 }, { passive: false });
 canvas.addEventListener('touchend', e => {
   e.preventDefault();
+  if (drawMode) return;
   if (!touch) return;
   if (e.touches.length > 0 && touch.mode === 'two') return;
   clearTimeout(touch.timer);
@@ -210,6 +214,29 @@ canvas.addEventListener('touchend', e => {
   else if (touch.mode === 'drag') { move(touch.x, touch.y, true); button(0, false, touch.x, touch.y); }
   touch = null;
 }, { passive: false });
+
+// v1.2: draw on their screen (mouse, finger or pen): lines show over their screen and fade after a few seconds.
+// Allowed in view-only sessions too - drawing can't click anything. Right-click or "Clear" removes the lines.
+let drawMode = false, stroke = null, strokeIds = Math.floor(Math.random() * 1e9);
+st.drawn = 0;
+function flushStroke() {
+  if (!stroke || stroke.pts.length < 2) return;
+  sendJson({ t: 'draw', id: stroke.id, mon: st.mon, pts: stroke.pts }); st.drawn++;
+  const n = stroke.pts.length; stroke.pts = [stroke.pts[n - 2], stroke.pts[n - 1]];
+}
+function endStroke() { if (!stroke) return; flushStroke(); clearInterval(stroke.timer); stroke = null; }
+$('bDraw').onclick = () => { drawMode = !drawMode; $('bDraw').classList.toggle('on', drawMode); $('bDraw').textContent = drawMode ? 'Drawing - tap to stop' : 'Draw'; $('bDrawClear').classList.toggle('hidden', !drawMode); canvas.style.cursor = drawMode ? 'crosshair' : ''; if (!drawMode) endStroke(); };
+$('bDrawClear').onclick = () => sendJson({ t: 'draw-clear' });
+canvas.addEventListener('pointerdown', e => {
+  if (!drawMode || st.state !== 'connected') return;
+  e.preventDefault();
+  if (e.button === 2) { sendJson({ t: 'draw-clear' }); return; }
+  endStroke(); try { canvas.setPointerCapture(e.pointerId); } catch { }
+  stroke = { id: ++strokeIds, pts: norm(e.clientX, e.clientY), timer: setInterval(flushStroke, 50) };
+});
+canvas.addEventListener('pointermove', e => { if (!drawMode || !stroke) return; e.preventDefault(); stroke.pts.push(...norm(e.clientX, e.clientY)); if (stroke.pts.length >= 600) flushStroke(); });
+const stopStroke = e => { if (!drawMode) return; e.preventDefault(); endStroke(); };
+canvas.addEventListener('pointerup', stopStroke); canvas.addEventListener('pointercancel', stopStroke);
 
 // physical keyboard
 const held = new Set();

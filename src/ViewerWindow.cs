@@ -18,7 +18,9 @@ namespace HallowAssist
         [DllImport("user32.dll")] static extern uint MapVirtualKey(uint code, uint type);
         readonly ViewerSession v;
         readonly Image img; readonly Border stage; readonly TextBlock status, banner, stats, safetyText; readonly StackPanel monitors;
-        readonly ToggleButton controlBtn, clipBtn; readonly ComboBox quality; readonly Border waitPanel;
+        readonly ToggleButton controlBtn, clipBtn, drawBtn; readonly ComboBox quality; readonly Border waitPanel; readonly Button restartBtn;
+        // v1.2: drawing on their screen - strokes go out in small batches while you drag
+        bool drawOn, drawing; long strokeId = new Random().Next(1, 1 << 30); readonly System.Collections.Generic.List<int> drawPts = new System.Collections.Generic.List<int>(); DispatcherTimer drawFlush;
         WriteableBitmap wb; ChatWindow chat;
         bool controlOn = true; int pending; System.Drawing.Rectangle dirty = System.Drawing.Rectangle.Empty; readonly object dirtyLock = new object();
         long lastFrames, lastBytes; DateTime lastStats = DateTime.UtcNow;
@@ -39,6 +41,9 @@ namespace HallowAssist
             clipBtn = new ToggleButton { Content = "Sync clipboard", Style = Ui.S("Chip"), Margin = new Thickness(0, 0, 6, 4), ToolTip = "Copied text goes both ways (only if they turned on clipboard sharing)" };
             clipBtn.Click += (s, e) => v.ClipSync = clipBtn.IsChecked == true;
             bar.Children.Add(clipBtn);
+            drawBtn = new ToggleButton { Content = "Draw", Style = Ui.S("Chip"), Margin = new Thickness(0, 0, 6, 4), ToolTip = "Draw on their screen to show them where to click (lines fade after a few seconds). Right-click clears. Works in view-only sessions too." };
+            drawBtn.Click += (s, e) => { drawOn = drawBtn.IsChecked == true; img.Cursor = drawOn ? Cursors.Pen : Cursors.Arrow; if (!drawOn) EndStroke(); };
+            bar.Children.Add(drawBtn);
             bar.Children.Add(Bb("Chat", OpenChat));
             bar.Children.Add(Bb("Send a file", PickFile));
             quality = new ComboBox { Style = Ui.S("Combo"), Width = 130, Margin = new Thickness(0, 0, 6, 4), ToolTip = "Picture quality" };
@@ -50,6 +55,9 @@ namespace HallowAssist
             ToolTipService.SetShowOnDisabled(cad, true);
             cad.ToolTip = "Ctrl+Alt+Del can't be sent: Windows only accepts it from their own keyboard. Ask them to press it.";
             bar.Children.Add(cad);
+            restartBtn = Bb("Restart their PC", ConfirmRestart); restartBtn.Visibility = Visibility.Collapsed;
+            restartBtn.ToolTip = "Your own PCs only (unattended access): Windows restarts and Hallow Assist connects again by itself when it's back.";
+            bar.Children.Add(restartBtn);
             var end = Ui.Btn("Disconnect", () => v.End("You ended the session.", true), true); end.Margin = new Thickness(0, 0, 6, 4);
             bar.Children.Add(end);
             DockPanel.SetDock(bar, Dock.Top); dp.Children.Add(bar);
@@ -78,9 +86,20 @@ namespace HallowAssist
             dp.Children.Add(stage);
             Content = dp;
 
-            img.MouseMove += (s, e) => { if (Ok()) { int nx, ny; Norm(e, out nx, out ny); v.Move(nx, ny); } };
-            img.MouseDown += (s, e) => { img.Focus(); if (!Ok()) return; int nx, ny; Norm(e, out nx, out ny); img.CaptureMouse(); v.Button(Btn(e.ChangedButton), true, nx, ny); e.Handled = true; };
-            img.MouseUp += (s, e) => { if (!Ok()) return; int nx, ny; Norm(e, out nx, out ny); v.Button(Btn(e.ChangedButton), false, nx, ny); img.ReleaseMouseCapture(); e.Handled = true; };
+            drawFlush = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) }; drawFlush.Tick += (s, e) => FlushStroke();
+            img.MouseMove += (s, e) => { if (drawOn) { if (drawing) { int dx, dy; Norm(e, out dx, out dy); drawPts.Add(dx); drawPts.Add(dy); } return; } if (Ok()) { int nx, ny; Norm(e, out nx, out ny); v.Move(nx, ny); } };
+            img.MouseDown += (s, e) =>
+            {
+                img.Focus();
+                if (drawOn)
+                {
+                    if (e.ChangedButton == MouseButton.Right) { v.ClearDraw(); e.Handled = true; return; }
+                    if (e.ChangedButton != MouseButton.Left) return;
+                    int dx, dy; Norm(e, out dx, out dy); strokeId++; drawing = true; drawPts.Clear(); drawPts.Add(dx); drawPts.Add(dy);
+                    img.CaptureMouse(); drawFlush.Start(); e.Handled = true; return;
+                }
+                if (!Ok()) return; int nx, ny; Norm(e, out nx, out ny); img.CaptureMouse(); v.Button(Btn(e.ChangedButton), true, nx, ny); e.Handled = true; };
+            img.MouseUp += (s, e) => { if (drawOn) { if (drawing && e.ChangedButton == MouseButton.Left) { EndStroke(); img.ReleaseMouseCapture(); } e.Handled = true; return; } if (!Ok()) return; int nx, ny; Norm(e, out nx, out ny); v.Button(Btn(e.ChangedButton), false, nx, ny); img.ReleaseMouseCapture(); e.Handled = true; };
             img.MouseWheel += (s, e) => { if (Ok()) v.Wheel(e.Delta, 0); };
             PreviewKeyDown += (s, e) => Key(e, true);
             PreviewKeyUp += (s, e) => Key(e, false);
@@ -96,6 +115,15 @@ namespace HallowAssist
             v.Files.Offered += (name, size, answer) => Dispatcher.BeginInvoke(new Action(() => new PromptWindow("They want to send you a file", name + " (" + Transfers.Size(size) + "). It goes into " + v.Files.Folder + "." + Transfers.Warning(name), "Accept", "Decline", answer) { Owner = this }.Show()));
             if (!Snap.On) { var t = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) }; t.Tick += (s, e) => ShowStats(); t.Start(); }
             Refresh();
+        }
+        void FlushStroke() { if (drawPts.Count >= 2) { v.SendDraw(strokeId, drawPts.ToArray()); var lx = drawPts[drawPts.Count - 2]; var ly = drawPts[drawPts.Count - 1]; drawPts.Clear(); if (drawing) { drawPts.Add(lx); drawPts.Add(ly); } } }
+        void EndStroke() { if (!drawing) return; FlushStroke(); drawing = false; drawPts.Clear(); drawFlush.Stop(); }
+        void ConfirmRestart()
+        {
+            if (!v.CanRestart) return;
+            var r = MessageBox.Show(this, "Restart this PC now?\n\nWindows restarts in 10 seconds (unsaved work there is lost). Hallow Assist connects again by itself when it's back - " +
+                "if Windows asks someone to sign in first, it connects after that.", "Hallow Assist - restart their PC", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+            if (r == MessageBoxResult.Yes) v.RequestRestart();
         }
         Button Bb(string label, Action a) { var b = Ui.Btn(label, a); b.Margin = new Thickness(0, 0, 6, 4); return b; }
         bool Ok() { return controlOn && v.CanControl; }
@@ -139,6 +167,8 @@ namespace HallowAssist
             safetyText.Text = v.Safety ?? "----";
             waitPanel.Visibility = v.State == ViewerState.Connected ? Visibility.Collapsed : Visibility.Visible;
             banner.Text = v.Banner; banner.Visibility = string.IsNullOrEmpty(v.Banner) ? Visibility.Collapsed : Visibility.Visible;
+            drawBtn.IsEnabled = v.State == ViewerState.Connected; if (!drawBtn.IsEnabled && drawOn) { drawOn = false; drawBtn.IsChecked = false; img.Cursor = Cursors.Arrow; EndStroke(); }
+            restartBtn.Visibility = v.HostUnattended ? Visibility.Visible : Visibility.Collapsed; restartBtn.IsEnabled = v.CanRestart;
             controlBtn.IsEnabled = v.ControlAllowed; controlBtn.IsChecked = v.ControlAllowed && controlOn; controlBtn.Content = v.ControlAllowed ? "Control" : "View only";
             clipBtn.IsEnabled = v.ClipboardAllowed; if (!v.ClipboardAllowed) { clipBtn.IsChecked = false; v.ClipSync = false; }
             monitors.Children.Clear();

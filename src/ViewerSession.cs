@@ -17,6 +17,7 @@ namespace HallowAssist
         public volatile ViewerState State = ViewerState.Connecting;
         public string Safety, HostName, EndReason, Status = "Connecting to the relay...", Banner = "", QualityLabel = "";
         public bool ControlAllowed, ClipboardAllowed;
+        public bool HostUnattended, Restarting;   // v1.2: one of your own PCs (it can be restarted); a restart was started
         public MonitorInfo[] Monitors = new MonitorInfo[0];
         public int Monitor;
         public readonly FrameBuffer Screen = new FrameBuffer();
@@ -139,7 +140,7 @@ namespace HallowAssist
             {
                 case "consent":
                     if (!Msg.Bool(m, "allowed")) { End("They said no.", false); return; }
-                    ControlAllowed = Msg.Bool(m, "control"); ClipboardAllowed = Msg.Bool(m, "clipboard"); HostName = Msg.Str(m, "host");
+                    ControlAllowed = Msg.Bool(m, "control"); ClipboardAllowed = Msg.Bool(m, "clipboard"); HostName = Msg.Str(m, "host"); HostUnattended = Msg.Bool(m, "unattended");
                     var list = new List<MonitorInfo>();
                     object mo; if (m.TryGetValue("monitors", out mo) && mo is System.Collections.ArrayList)
                         foreach (var x in (System.Collections.ArrayList)mo) { var d = x as Dictionary<string, object>; if (d != null) list.Add(new MonitorInfo { W = (int)Msg.Num(d, "w"), H = (int)Msg.Num(d, "h"), Primary = Msg.Bool(d, "primary") }); }
@@ -157,6 +158,8 @@ namespace HallowAssist
                 case "pong": RttMs = (int)Math.Max(0, (long)(DateTime.UtcNow - new DateTime(1970, 1, 1)).TotalMilliseconds - Msg.Num(m, "ts")); break;
                 case "q": QualityLabel = Msg.Str(m, "label") ?? ""; Fire(); break;
                 case "bye": End(Msg.Str(m, "reason") ?? "They ended the session.", false); break;
+                case "restarting": Restarting = true; Status = "Their PC is restarting - Hallow Assist reconnects when it's back."; Fire(); break;
+                case "note": { var t = Msg.Str(m, "text"); if (!string.IsNullOrEmpty(t)) Say(t); break; }
                 default: Files.Handle(m); break;
             }
         }
@@ -185,6 +188,12 @@ namespace HallowAssist
         public void Wheel(int dy, int dx) { if (CanControl) SendPlain(Msg.Wheel(dy, dx)); }
         public void Key(int scan, bool down) { if (CanControl) SendPlain(Msg.Key(scan, down)); }
         public void Text(string s) { if (CanControl && !string.IsNullOrEmpty(s)) SendPlain(Msg.Text(s)); }
+        // v1.2: drawing on their screen (0..65535 across the monitor you're looking at) and restarting your own PC
+        public void SendDraw(long id, int[] pts) { if (State == ViewerState.Connected && pts != null && pts.Length >= 2) SendJson("t", "draw", "id", id, "mon", Monitor, "pts", pts); }
+        public void ClearDraw() { if (State == ViewerState.Connected) SendJson("t", "draw-clear"); }
+        public bool CanRestart { get { return State == ViewerState.Connected && HostUnattended && !Restarting; } }
+        public void RequestRestart() { if (CanRestart) SendJson("t", "restart"); }
+        public string HelperName { get { return name; } }
         public void SetMonitor(int i) { if (State == ViewerState.Connected) SendJson("t", "monitor", "i", i); }
         public void SetQuality(string q) { if (State == ViewerState.Connected) SendJson("t", "quality", "q", q); }
         public void SendChat(string t) { if (State == ViewerState.Connected && !string.IsNullOrWhiteSpace(t)) SendJson("t", "chat", "text", t); }

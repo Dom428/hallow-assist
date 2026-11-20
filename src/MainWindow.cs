@@ -166,8 +166,25 @@ namespace HallowAssist
 
         // ---- v1.1: Your PCs (own PCs with unattended access): one-click Connect, newest first
         bool focusPassword;
+        readonly System.Collections.Generic.Dictionary<string, System.Windows.Shapes.Ellipse> dots = new System.Collections.Generic.Dictionary<string, System.Windows.Shapes.Ellipse>();
+        void PaintDot(System.Windows.Shapes.Ellipse d, string code)
+        {
+            string st; c.PcStatus.TryGetValue(code, out st);
+            d.Fill = st == "online" ? Ui.Green : st == "busy" ? Ui.Amber : st == "offline" ? Ui.B("#5A5266") : Brushes.Transparent;
+            d.Stroke = st == null ? Ui.B("#5A5266") : null; d.StrokeThickness = 1.2;
+            d.ToolTip = st == "online" ? "Online - waiting for you" : st == "busy" ? "Online - someone is connected to it" : st == "offline" ? "Offline (switched off, asleep, or Hallow Assist isn't running there)" : "Not checked yet";
+        }
+        public void ShowPcStatus() { foreach (var kv in dots) PaintDot(kv.Value, kv.Key); }
         void AddYourPcs(ViewerSession last)
         {
+            dots.Clear();
+            if (c.WaitingForRestart)
+            {
+                var wr = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
+                var stop = Ui.Btn("Stop waiting", () => { c.CancelRestartWait(); RefreshHelpSomeone(); }); DockPanel.SetDock(stop, Dock.Right); wr.Children.Add(stop);
+                var wt = Ui.T("Waiting for your PC to restart - it reconnects by itself.", 12.5, false, Ui.Amber); wt.VerticalAlignment = VerticalAlignment.Center; wt.TextWrapping = TextWrapping.Wrap; wr.Children.Add(wt);
+                helpSomeone.Children.Add(wr);
+            }
             if (c.S.Pcs.Count == 0) return;
             helpSomeone.Children.Add(Ui.T("Your PCs", 13, true, null, 4));
             bool canGo = AssistSettings.WsUri(c.S.RelayUrl) != null;
@@ -189,7 +206,12 @@ namespace HallowAssist
                 }, true);
                 connect.IsEnabled = canGo; DockPanel.SetDock(connect, Dock.Right); row.Children.Add(connect);
                 var info = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 12, 0) };
-                var nameText = Ui.T(p.Name, 13, true); nameText.TextTrimming = TextTrimming.CharacterEllipsis; info.Children.Add(nameText);
+                var nameText = Ui.T(p.Name, 13, true); nameText.TextTrimming = TextTrimming.CharacterEllipsis;
+                // v1.2: online dot (green = waiting for you, amber = someone is connected, grey = offline)
+                var dot = new System.Windows.Shapes.Ellipse { Width = 9, Height = 9, Margin = new Thickness(0, 1, 7, 0), VerticalAlignment = VerticalAlignment.Center };
+                dots[p.Code] = dot; PaintDot(dot, p.Code);
+                var nameRow = new DockPanel(); DockPanel.SetDock(dot, Dock.Left); nameRow.Children.Add(dot); nameRow.Children.Add(nameText);
+                info.Children.Add(nameRow);
                 var detail = Ui.Muted(Ui.FormatCode(p.Code) + (p.Key != null ? "  -  remembered" : "  -  type the password"), 11.5); detail.TextTrimming = TextTrimming.CharacterEllipsis; info.Children.Add(detail);
                 info.ToolTip = p.Key != null ? "The password is remembered on this PC (as an encrypted key)." : "You type the password each time.";
                 row.Children.Add(info);
@@ -232,7 +254,7 @@ namespace HallowAssist
             unattendedInfo = Ui.Muted(UnattendedText(), 11.5, 0); unattendedInfo.Margin = new Thickness(52, 0, 0, 4);
             ub.Children.Add(unattendedInfo);
             sp.Children.Add(ub);
-            var row = Ui.Row(Ui.Btn("Check for updates", () => c.CheckForUpdate(true)), Ui.Btn("Open downloads folder", () => { try { System.IO.Directory.CreateDirectory(Transfers.DownloadFolder()); System.Diagnostics.Process.Start("explorer.exe", "\"" + Transfers.DownloadFolder() + "\""); } catch { } }));
+            var row = Ui.Row(Ui.Btn("Check for updates", () => c.CheckForUpdate(true)), Ui.Btn("Connection history", () => c.ShowHistory()), Ui.Btn("Open downloads folder", () => { try { System.IO.Directory.CreateDirectory(Transfers.DownloadFolder()); System.Diagnostics.Process.Start("explorer.exe", "\"" + Transfers.DownloadFolder() + "\""); } catch { } }));
             row.Margin = new Thickness(0, 8, 0, 8); sp.Children.Add(row);
             return sp;
         }

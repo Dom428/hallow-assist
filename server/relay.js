@@ -10,7 +10,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { upgrade } from './ws.js';
 
-export const VERSION = '1.1';
+export const VERSION = '1.2';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 export function config(env = process.env) {
@@ -126,6 +126,18 @@ export function createRelay(opts = {}) {
           send(ws, { t: 'paired' }); send(s.host, { t: 'paired' });
           log('paired');
           return;
+        }
+        // v1.2: is one of Your PCs online? Only unattended (persistent) codes are ever reported - a one-time code never is.
+        // Each question counts as one join for the rate limit, and at most 20 codes are answered, so this can't map codes.
+        if (m.t === 'status') {
+          const wait = limited(ip);
+          if (wait) { send(ws, { t: 'error', reason: 'rate-limited', retryAfter: wait }); return ws.close(4029, 'too many tries'); }
+          limitFor(ip).all.push(Date.now());
+          const codes = Array.isArray(m.codes) ? m.codes.slice(0, 20).map(c => String(c).replace(/\D/g, '')).filter(c => /^\d{9}$/.test(c)) : [];
+          const online = [], busy = [];
+          for (const c of codes) { const s = sessions.get(c); if (s && s.persistent && s.host.open) (s.viewer ? busy : online).push(c); }
+          send(ws, { t: 'status', online, busy });
+          return ws.close(1000, 'status');
         }
         return ws.close(1008, 'unknown hello');
       }
