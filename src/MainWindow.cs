@@ -1,6 +1,7 @@
 ﻿// Hallow Assist main window: "Get help" (show a code and password, nothing is shared until you click Allow) and
 // "Help someone" (enter their code and password), plus settings: your relay, your name, unattended access, the Hallow links.
 using System;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -108,8 +109,20 @@ namespace HallowAssist
             {
                 helpSomeone.Children.Add(Ui.T(v.State == ViewerState.Connected ? "You're connected - their screen is in its own window." : v.Status, 13, true, null, 8));
                 helpSomeone.Children.Add(Ui.Row(Ui.Btn("Show their screen", () => c.ShowViewer()), Ui.Btn("Disconnect", () => v.End("You ended the session.", true), true)));
+                // v1.1: one of your own PCs (not a one-time password) can be kept in Your PCs
+                if (v.State == ViewerState.Connected && !v.OneTimePassword && c.S.FindPc(v.Code) == null && c.S.Pcs.Count < AssistSettings.MaxPcs)
+                {
+                    var save = Ui.Btn("Save this PC to Your PCs", () =>
+                    {
+                        var d = new SavePcDialog(v.Code, false) { Owner = this };
+                        if (d.ShowDialog() == true) { c.SavePc(d.PcName, v.Code, d.Remember ? v.PasswordKey : null); Say("Saved to Your PCs."); }
+                    });
+                    save.HorizontalAlignment = HorizontalAlignment.Left; save.Margin = new Thickness(0, 10, 0, 0);
+                    helpSomeone.Children.Add(save);
+                }
                 return;
             }
+            AddYourPcs(v);
             helpSomeone.Children.Add(Ui.Muted("Ask them to open Hallow Assist and click Get help, then type what it shows. Or use any browser (phone, tablet, TV) at your relay's address.", 12.5, 10));
             var g = new Grid(); g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(92) }); g.ColumnDefinitions.Add(new ColumnDefinition());
             for (int i = 0; i < 3; i++) g.RowDefinitions.Add(new RowDefinition { Height = new GridLength(40) });
@@ -129,7 +142,52 @@ namespace HallowAssist
             }, true);
             go.IsDefault = true; go.HorizontalAlignment = HorizontalAlignment.Left; go.Padding = new Thickness(18, 8, 18, 8);
             go.IsEnabled = AssistSettings.WsUri(c.S.RelayUrl) != null;
-            helpSomeone.Children.Add(go);
+            var add = Ui.Btn("Add one of your PCs", AddPc); add.IsEnabled = c.S.Pcs.Count < AssistSettings.MaxPcs;
+            var buttons = Ui.Row(go, add); buttons.HorizontalAlignment = HorizontalAlignment.Left;
+            helpSomeone.Children.Add(buttons);
+            if (focusPassword) { focusPassword = false; Dispatcher.BeginInvoke(new Action(() => pw.Focus()), System.Windows.Threading.DispatcherPriority.Input); }
+        }
+
+        // ---- v1.1: Your PCs (own PCs with unattended access): one-click Connect, newest first
+        bool focusPassword;
+        void AddYourPcs(ViewerSession last)
+        {
+            if (c.S.Pcs.Count == 0) return;
+            helpSomeone.Children.Add(Ui.T("Your PCs", 13, true, null, 4));
+            bool canGo = AssistSettings.WsUri(c.S.RelayUrl) != null;
+            foreach (var pc in c.S.Pcs.OrderByDescending(p => p.LastUsed ?? "").ThenBy(p => p.Name))
+            {
+                var p = pc;
+                var row = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
+                var forget = Ui.Btn("Forget", () =>
+                {
+                    if (MessageBox.Show(this, "Remove " + p.Name + " from Your PCs?" + (p.Key != null ? " Its remembered password goes too." : ""), "Hallow Assist", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes) c.ForgetPc(p.Code);
+                });
+                forget.Margin = new Thickness(6, 0, 0, 0); DockPanel.SetDock(forget, Dock.Right); row.Children.Add(forget);
+                var connect = Ui.Btn("Connect", () =>
+                {
+                    if (c.ConnectSaved(p)) return;
+                    code.Text = Ui.FormatCode(p.Code); pw.Clear(); focusPassword = true;
+                    helpStatus.Text = "Type the unattended password for " + p.Name + "."; helpStatus.Foreground = Ui.R("Muted");
+                    pw.Focus();
+                }, true);
+                connect.IsEnabled = canGo; DockPanel.SetDock(connect, Dock.Right); row.Children.Add(connect);
+                var info = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+                info.Children.Add(Ui.T(p.Name, 13, true));
+                info.Children.Add(Ui.Muted(Ui.FormatCode(p.Code) + (p.Key != null ? "  -  password remembered" : "  -  type the password"), 11.5));
+                row.Children.Add(info);
+                helpSomeone.Children.Add(row);
+            }
+            var sep = new Border { Height = 1, Background = Ui.R("Line"), Margin = new Thickness(0, 4, 0, 10) };
+            helpSomeone.Children.Add(sep);
+        }
+        void AddPc()
+        {
+            var d = new SavePcDialog(null, true) { Owner = this };
+            if (d.ShowDialog() != true) return;
+            if (c.S.FindPc(d.Code) != null && MessageBox.Show(this, "That code is already in Your PCs. Replace it?", "Hallow Assist", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
+            c.SavePc(d.PcName, d.Code, d.Remember && !string.IsNullOrEmpty(d.Password) ? Kdf.PasswordKey(d.Password, d.Code) : null);
+            Say("Added to Your PCs.");
         }
         static void AddRow(Grid g, int r, string label, FrameworkElement f)
         {

@@ -33,6 +33,7 @@ PRIVACY
   keys, chat or files. Crash reports stay on this PC. Nothing else is sent anywhere.
 
 WHAT'S NEW IN 1.1
+- Your PCs: save your own PCs (unattended access) and connect with one click.
 - Unattended access really comes back after its 15-minute pause.
 - Received files are marked as from the internet, and the prompt warns about programs and scripts.
 - Safer file names and picture sizes; the relay no longer drops you when a slow helper leaves.

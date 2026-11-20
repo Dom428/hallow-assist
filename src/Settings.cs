@@ -1,7 +1,9 @@
 ﻿// Hallow Assist settings: %APPDATA%\HallowAssist\settings.json. Unattended-access secrets are kept encrypted for this Windows
 // user (DPAPI) and never written in plain text; the unattended password itself is never stored, only a key derived from it.
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
 using System.Security.Cryptography;
@@ -10,6 +12,17 @@ using System.Threading;
 
 namespace HallowAssist
 {
+    // v1.1: one of "Your PCs" - a PC with unattended access that you connect to often. Its code never changes, so it can be
+    // kept; the password never is - only, if you tick Remember, the key made from it, encrypted for your Windows account.
+    [DataContract]
+    public class SavedPc
+    {
+        [DataMember] public string Name;
+        [DataMember] public string Code;
+        [DataMember] public string Key;        // DPAPI-protected PBKDF2 key (null = type the password each time)
+        [DataMember] public string LastUsed;   // ISO time of the last good connection
+    }
+
     [DataContract]
     public class AssistSettings
     {
@@ -36,6 +49,7 @@ namespace HallowAssist
         [DataMember] public string UnattendedKey;      // DPAPI-protected: PBKDF2 of the unattended password with that code
         [DataMember] public string UnattendedCode;     // shown in the window so you can note it down
         [DataMember] public string UnattendedLockedUntil;
+        [DataMember] public List<SavedPc> Pcs;   // v1.1: Your PCs
 
         public static AssistSettings Load()
         {
@@ -58,7 +72,25 @@ namespace HallowAssist
             var r = Env("HALLOW_ASSIST_RELAY"); if (TestDir != null && r != null) RelayUrl = r;
             // unattended needs all of its parts; anything missing = off
             if (Unattended && (UnattendedSecret == null || UnattendedKey == null)) Unattended = false;
+            Pcs = CleanPcs(Pcs);
         }
+        public const int MaxPcs = 20;
+        // keeps only usable entries: a 9-digit code, a name (or the code), one entry per code, at most MaxPcs
+        public static List<SavedPc> CleanPcs(List<SavedPc> pcs)
+        {
+            var o = new List<SavedPc>();
+            foreach (var p in pcs ?? new List<SavedPc>())
+            {
+                if (p == null) continue;
+                var code = Kdf.NormCode(p.Code); if (code.Length != 9 || o.Any(x => x.Code == code)) continue;
+                var name = new string((p.Name ?? "").Where(ch => !char.IsControl(ch)).ToArray()).Trim();
+                if (name.Length == 0) name = Ui.FormatCode(code); if (name.Length > 40) name = name.Substring(0, 40);
+                o.Add(new SavedPc { Name = name, Code = code, Key = p.Key, LastUsed = p.LastUsed });
+                if (o.Count >= MaxPcs) break;
+            }
+            return o;
+        }
+        public SavedPc FindPc(string code) { code = Kdf.NormCode(code); return Pcs.FirstOrDefault(p => p.Code == code); }
         static readonly object saveLock = new object();
         public void Save()
         {
@@ -79,6 +111,10 @@ namespace HallowAssist
         static readonly byte[] Entropy = Encoding.UTF8.GetBytes("Hallow Assist unattended v1");
         public static string Protect(byte[] data) { return Convert.ToBase64String(ProtectedData.Protect(data, Entropy, DataProtectionScope.CurrentUser)); }
         public static byte[] Unprotect(string s) { try { return s == null ? null : ProtectedData.Unprotect(Convert.FromBase64String(s), Entropy, DataProtectionScope.CurrentUser); } catch { return null; } }
+        // v1.1: a remembered key for one of Your PCs (its own entropy, so it can't be swapped with this PC's unattended key)
+        static readonly byte[] PcEntropy = Encoding.UTF8.GetBytes("Hallow Assist saved PC v1");
+        public static string ProtectPcKey(byte[] key) { return Convert.ToBase64String(ProtectedData.Protect(key, PcEntropy, DataProtectionScope.CurrentUser)); }
+        public static byte[] UnprotectPcKey(string s) { try { var k = s == null ? null : ProtectedData.Unprotect(Convert.FromBase64String(s), PcEntropy, DataProtectionScope.CurrentUser); return k != null && k.Length == 32 ? k : null; } catch { return null; } }
 
         // the relay address as a WebSocket URL (https://x -> wss://x/ws); null if it isn't a usable address
         public static Uri WsUri(string relay)

@@ -88,6 +88,10 @@ namespace HallowAssist
             var vs3 = new ViewerSession(new Uri("wss://assist.example.com/ws"), "481207365", "K7MX2P", "Dom");
             var vw3 = new ViewerWindow(vs3, "481207365"); vw3.SnapFill(); vs3.Banner = "They need to click the admin prompt themselves - Windows hides it from remote help."; vw3.Refresh(); Snap.Save(vw3, Path.Combine(dir, "viewer-uac.png"), 1180, 760);
             Snap.Save(new PromptWindow("Dom wants to send you a file", "setup-notes.txt (12 KB). It goes into Downloads\\Hallow Assist.", "Accept", "Decline", ok => { }), Path.Combine(dir, "file-prompt.png"), 420, 0);
+            var sd = new SavePcDialog(null, true); sd.SnapFill("Living room PC", "715 390 246"); Snap.Save(sd, Path.Combine(dir, "save-pc.png"), 480, 0);
+            c.S.RelayUrl = "https://assist.example.com"; c.S.Unattended = false;
+            c.S.Pcs = AssistSettings.CleanPcs(new System.Collections.Generic.List<SavedPc> { new SavedPc { Name = "Living room PC", Code = "715390246", Key = "x", LastUsed = DateTime.Now.ToString("o") }, new SavedPc { Name = "Mum's laptop", Code = "302118457" } });
+            main.Build(); Snap.Save(main, Path.Combine(dir, "main-yourpcs.png"), 860, 0);
             var ud = new UnattendedDialog(); ud.SnapFill("Use at least 12 characters."); Snap.Save(ud, Path.Combine(dir, "unattended.png"), 480, 0);
             var chat = new ChatWindow("Dom"); chat.Add("Them", "Can you see the printer settings?", false); chat.Add("You", "Yes - click Devices on the left.", true); Snap.Save(chat, Path.Combine(dir, "chat.png"), 380, 420);
             Snap.Save(CrashNotice.Make(Path.Combine(dir, "example.txt")), Path.Combine(dir, "crash.png"), 440, 0);
@@ -346,14 +350,50 @@ namespace HallowAssist
         {
             var uri = AssistSettings.WsUri(S.RelayUrl); if (uri == null) return;
             if (Viewer != null && Viewer.State != ViewerState.Ended) return;
-            var v = new ViewerSession(uri, code, password, name);
+            StartViewer(new ViewerSession(uri, code, password, name), code);
+        }
+        // v1.1: Your PCs - connect with the remembered key; false = no usable key (type the password instead)
+        public bool ConnectSaved(SavedPc pc)
+        {
+            var uri = AssistSettings.WsUri(S.RelayUrl); if (uri == null || pc == null) return false;
+            if (Viewer != null && Viewer.State != ViewerState.Ended) return false;
+            var key = AssistSettings.UnprotectPcKey(pc.Key);
+            if (key == null) { if (pc.Key != null) { pc.Key = null; S.Save(); } return false; }
+            var name = S.Name.Trim().Length > 0 ? S.Name.Trim() : Environment.UserName;
+            StartViewer(new ViewerSession(uri, pc.Code, key, name), pc.Code);
+            return true;
+        }
+        public void SavePc(string name, string code, byte[] key)
+        {
+            code = Kdf.NormCode(code); if (code.Length != 9) return;
+            var pc = S.FindPc(code);
+            if (pc == null) { if (S.Pcs.Count >= AssistSettings.MaxPcs) return; pc = new SavedPc { Code = code }; S.Pcs.Add(pc); }
+            pc.Name = name; pc.Key = key == null ? null : AssistSettings.ProtectPcKey(key);
+            S.Pcs = AssistSettings.CleanPcs(S.Pcs); S.Save();
+            if (main != null) main.RefreshHelpSomeone();
+        }
+        public void ForgetPc(string code) { var pc = S.FindPc(code); if (pc == null) return; S.Pcs.Remove(pc); S.Save(); if (main != null) main.RefreshHelpSomeone(); }
+        static DateTime Parse(string iso) { DateTime d; return DateTime.TryParse(iso, null, System.Globalization.DateTimeStyles.RoundtripKind, out d) ? d : DateTime.MinValue; }
+        void StartViewer(ViewerSession v, string code)
+        {
             v.Clip = AssistSettings.TestDir != null ? (IClip)new FileClip(Path.Combine(AssistSettings.Dir, "clipboard.txt")) : new WpfClip(ui);
             Viewer = v;
             v.Changed += () => ui.BeginInvoke(new Action(() => { if (main != null) main.RefreshHelpSomeone(); WriteStatus(); UpdateTrayText(); }));
             v.Chat += t => Log("chat from host: " + t);
             v.Note += t => Log(t);
             if (AssistSettings.Headless) v.Files.Offered += (n, s, a) => { Log("file offered: " + n); lock (pendingFiles) pendingFiles.Enqueue(a); };
-            v.Ended += r => ui.BeginInvoke(new Action(() => { Log("viewer ended: " + r); if (main != null) main.RefreshHelpSomeone(); WriteStatus(); }));
+            v.Changed += () => ui.BeginInvoke(new Action(() =>
+            {
+                var pc = S.FindPc(v.Code);   // v1.1: Your PCs remember when they were last reached
+                if (pc != null && v.State == ViewerState.Connected && (DateTime.Now - Parse(pc.LastUsed)).TotalMinutes > 1) { pc.LastUsed = DateTime.Now.ToString("o"); S.Save(); }
+            }));
+            v.Ended += r => ui.BeginInvoke(new Action(() =>
+            {
+                Log("viewer ended: " + r);
+                // v1.1: a remembered key that no longer works (the unattended password was changed there) is forgotten
+                if (v.UsedSavedKey && v.WrongPassword) { var pc = S.FindPc(v.Code); if (pc != null) { pc.Key = null; S.Save(); if (main != null) main.Say("The remembered password for " + pc.Name + " didn't work any more, so it was forgotten. Type the password to connect.", Ui.Amber); } }
+                if (main != null) main.RefreshHelpSomeone(); WriteStatus();
+            }));
             if (!AssistSettings.Headless) { viewerWin = new ViewerWindow(v, code); viewerWin.Show(); }
             v.Start();
             if (main != null) main.RefreshHelpSomeone();

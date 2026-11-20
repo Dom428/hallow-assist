@@ -12,7 +12,7 @@ namespace HallowAssist
 
     public class ViewerSession
     {
-        readonly Uri relay; readonly string code, password, name;
+        readonly Uri relay; readonly string code, password, name; readonly byte[] presetKey;
         RelayLink link; Channel chan; EcdhKey ecdh; SessionKeys keys; byte[] pwKey;
         public volatile ViewerState State = ViewerState.Connecting;
         public string Safety, HostName, EndReason, Status = "Connecting to the relay...", Banner = "", QualityLabel = "";
@@ -32,6 +32,13 @@ namespace HallowAssist
         public event Action<string> Note;
         public event Action<string> Ended;
 
+        // v1.1: one of Your PCs with its remembered key (the password itself is never kept)
+        public ViewerSession(Uri relay, string code, byte[] passwordKey, string name) : this(relay, code, (string)null, name) { presetKey = passwordKey; }
+        public string Code { get { return code; } }
+        public byte[] PasswordKey { get { return pwKey; } }
+        public bool UsedSavedKey { get { return presetKey != null; } }
+        public bool OneTimePassword { get { return presetKey == null && Kdf.IsOneTime(password); } }
+        public bool WrongPassword { get { return rejected; } }
         public ViewerSession(Uri relay, string code, string password, string name)
         {
             this.relay = relay; this.code = Kdf.NormCode(code); this.password = password; this.name = string.IsNullOrWhiteSpace(name) ? "Helper" : name.Trim();
@@ -47,7 +54,7 @@ namespace HallowAssist
             {
                 try
                 {
-                    var pw = new Thread(() => { pwKey = Kdf.PasswordKey(password, code); }); pw.Start();
+                    var pw = new Thread(() => { pwKey = presetKey ?? Kdf.PasswordKey(password, code); }); pw.Start();
                     ecdh = new EcdhKey();
                     link = new RelayLink();
                     link.Text += OnText; link.Binary += OnBinary; link.Closed += r => End(State == ViewerState.Connecting ? "Couldn't reach the relay. Check the relay address in Settings." : r, false);

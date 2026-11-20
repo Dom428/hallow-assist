@@ -52,7 +52,9 @@ end-to-end encrypted.
 
 ## What's new
 
-- **1.1** - Security and reliability fixes from a review: unattended access really comes back after its 15-minute pause
+- **1.1** - **Your PCs**: save your own PCs (the ones with unattended access) under Help someone and connect with one
+  click. Their password is only remembered if you tick it - as a key made from it, encrypted for your Windows account,
+  never the password itself - and a remembered key that stops working is forgotten. Also security and reliability fixes from a review: unattended access really comes back after its 15-minute pause
   (before, it stayed off until the app restarted); only wrong passwords in a row count towards that pause; files you
   receive are marked as from the internet (Windows SmartScreen warns before running them) and the file prompt says when
   a file is a program, script or shortcut; every reserved Windows device name is refused as a file name; a frame claiming
@@ -88,4 +90,4 @@ this PC, and updates from GitHub releases (asks first, checks the SHA-256).
 ## Not yet
 
 See [ROADMAP.md](ROADMAP.md): helping Android phones and TVs, iPhone viewing, an admin service for UAC prompts, H.264,
-sound, several helpers at once, an address book.
+sound, several helpers at once, remembering the people you help (Your PCs covers your own PCs).

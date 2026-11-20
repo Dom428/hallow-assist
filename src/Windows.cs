@@ -196,6 +196,56 @@ namespace HallowAssist
         public void SnapFill(string e) { err.Text = e; }
     }
 
+    // v1.1: "Save to Your PCs" - a name for one of your own PCs (unattended access) and, only if you tick it, its password
+    // remembered as an encrypted key. code == null: you type the code too (Add a PC); needPassword: the password isn't known yet.
+    public class SavePcDialog : Window
+    {
+        public string PcName, Code, Password; public bool Remember;
+        readonly TextBox name, codeBox; readonly PasswordBox pw; readonly CheckBox remember; readonly TextBlock err;
+        public SavePcDialog(string code, bool needPassword)
+        {
+            Ui.Dress(this, "Hallow Assist - Your PCs", 480);
+            ResizeMode = ResizeMode.NoResize; WindowStartupLocation = WindowStartupLocation.CenterOwner;
+            var sp = new StackPanel { Margin = new Thickness(24, 20, 24, 20) };
+            sp.Children.Add(Ui.T(code == null ? "Add one of your PCs" : "Save this PC", 17, true, null, 6));
+            sp.Children.Add(Ui.Muted("For your own PCs with unattended access: their code never changes, so you can connect with one click.", 12.5, 12));
+            sp.Children.Add(Ui.Muted("Name", 12, 4));
+            name = Ui.Field(); name.MaxLength = 40; name.Margin = new Thickness(0, 0, 0, 8); sp.Children.Add(name);
+            Code = code;
+            if (code == null)
+            {
+                sp.Children.Add(Ui.Muted("Its code (shown in Settings on that PC)", 12, 4));
+                codeBox = Ui.Field(); codeBox.MaxLength = 13; codeBox.Margin = new Thickness(0, 0, 0, 8); sp.Children.Add(codeBox);
+            }
+            if (needPassword)
+            {
+                sp.Children.Add(Ui.Muted("Its unattended password - only needed if you tick Remember", 12, 4));
+                pw = new PasswordBox { Height = 32, Padding = new Thickness(8, 6, 8, 6), Background = Ui.B("#1A1522"), Foreground = Ui.R("Text"), BorderBrush = Ui.R("Line"), Margin = new Thickness(0, 0, 0, 8) };
+                sp.Children.Add(pw);
+            }
+            remember = new CheckBox { Content = "Remember the password on this PC", IsChecked = false, Foreground = Ui.R("Text"), Margin = new Thickness(0, 4, 0, 4) };
+            sp.Children.Add(remember);
+            sp.Children.Add(Ui.Muted("Off: you type the password each time. On: it's kept as a key made from it, encrypted for your Windows account - " +
+                "but anyone who can sign in as you on this PC could then connect to that PC. If the password changes there, the key is forgotten.", 11.5, 10));
+            err = Ui.T("", 12, false, Ui.Amber, 8); sp.Children.Add(err);
+            var cancel = Ui.Btn("Cancel", () => { DialogResult = false; }); cancel.IsCancel = true;
+            var ok = Ui.Btn("Save", () =>
+            {
+                var c = Code ?? Kdf.NormCode(codeBox.Text);
+                if (c == null || Kdf.NormCode(c).Length != 9) { err.Text = "The code has 9 digits."; return; }
+                if (remember.IsChecked == true && pw != null && pw.Password.Length == 0) { err.Text = "Type the password to remember it - or untick Remember."; return; }
+                if (pw != null && pw.Password.Length > 0 && Kdf.IsOneTime(pw.Password)) { err.Text = "That looks like a one-time password: Your PCs are for PCs with unattended access."; return; }
+                Code = Kdf.NormCode(c); PcName = name.Text.Trim(); Password = pw == null ? null : pw.Password; Remember = remember.IsChecked == true;
+                DialogResult = true;
+            }, true);
+            ok.IsDefault = true; ok.Margin = new Thickness(0);
+            var row = Ui.Row(cancel, ok); row.HorizontalAlignment = HorizontalAlignment.Right; sp.Children.Add(row);
+            Content = sp;
+            Loaded += (s, e) => name.Focus();
+        }
+        public void SnapFill(string n, string c) { name.Text = n; if (codeBox != null) codeBox.Text = c; remember.IsChecked = true; }
+    }
+
     public static class CrashNotice
     {
         public static Window Make(string file)

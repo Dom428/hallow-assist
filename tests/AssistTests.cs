@@ -162,6 +162,25 @@ namespace HallowAssist.Tests
         {
             var s = new AssistSettings();
             Ok(!s.Unattended && s.UnattendedSecret == null, "unattended access is off by default");
+            // v1.1: Your PCs
+            {
+                var raw = new List<SavedPc> { new SavedPc { Name = "Den", Code = "715 390 246" }, new SavedPc { Name = "Dup", Code = "715390246" }, new SavedPc { Name = "Bad", Code = "12345" }, null,
+                    new SavedPc { Name = "  ", Code = "302-118-457" }, new SavedPc { Name = "Tab\tname that is far too long to show in one row of the list", Code = "111222333" } };
+                var clean = AssistSettings.CleanPcs(raw);
+                Ok(clean.Count == 3 && clean[0].Code == "715390246" && clean[0].Name == "Den" && clean[1].Name == "302 118 457" && clean[2].Name.Length == 40 && !clean[2].Name.Contains("\t"),
+                    "Your PCs: one entry per code, bad codes dropped, a name for every entry");
+                var many = new List<SavedPc>(); for (int i = 0; i < 30; i++) many.Add(new SavedPc { Name = "PC " + i, Code = (100000000 + i).ToString() });
+                Ok(AssistSettings.CleanPcs(many).Count == AssistSettings.MaxPcs && AssistSettings.CleanPcs(null).Count == 0, "Your PCs: at most 20, and none is fine");
+                Ok(Kdf.IsOneTime("k7mx2p") && Kdf.IsOneTime("K7M X2P") && !Kdf.IsOneTime("Abcdefghijk1") && !Kdf.IsOneTime("") && !Kdf.IsOneTime("K7MX2\u00e9"), "one-time passwords are told apart from unattended ones");
+                var key = Kdf.PasswordKey("Abcdefghijk1", "715390246");
+                var sealedKey = AssistSettings.ProtectPcKey(key);
+                Ok(!sealedKey.Contains(Convert.ToBase64String(key)) && AssistSettings.UnprotectPcKey(sealedKey).SequenceEqual(key), "a remembered key is stored encrypted and comes back unchanged");
+                Ok(AssistSettings.Unprotect(sealedKey) == null && AssistSettings.UnprotectPcKey(AssistSettings.Protect(key)) == null && AssistSettings.UnprotectPcKey("not base64") == null,
+                    "a remembered key and this PC's unattended key can't be swapped; junk is refused");
+                var pcSession = new ViewerSession(new Uri("wss://assist.example.com/ws"), "715 390 246", key, "Dom");
+                var oneTime = new ViewerSession(new Uri("wss://assist.example.com/ws"), "481207365", "K7MX2P", "Dom");
+                Ok(pcSession.UsedSavedKey && !pcSession.OneTimePassword && pcSession.Code == "715390246" && oneTime.OneTimePassword && !oneTime.UsedSavedKey, "a saved PC connects with its key; one-time sessions aren't offered for saving");
+            }
             Ok(UnattendedDialog.Check("short", "short") != null && UnattendedDialog.Check("Abcdefghijk1", "Abcdefghijk1") == null && UnattendedDialog.Check("aaaaaaaaaaaaaaaaaaaaaa", "aaaaaaaaaaaaaaaaaaaaaa") != null && UnattendedDialog.Check("Abcdefghijk1", "Abcdefghijk2") != null, "unattended password must be strong and typed twice");
             Ok(AssistSettings.WsUri("https://assist.example.com").ToString() == "wss://assist.example.com/ws" && AssistSettings.WsUri("assist.example.com/") .ToString() == "wss://assist.example.com/ws" &&
                AssistSettings.WsUri("http://127.0.0.1:8090").ToString() == "ws://127.0.0.1:8090/ws" && AssistSettings.WsUri("http://assist.example.com") == null && AssistSettings.WsUri("ftp://x") == null, "relay address: https -> wss, plain http only locally");

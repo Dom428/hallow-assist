@@ -27,6 +27,12 @@ namespace HallowAssist
             if (compact.Length == 6) { bool ok = true; foreach (var c in compact) if (!(c < 128 && char.IsLetterOrDigit(c))) ok = false; if (ok) return compact.ToUpperInvariant(); }
             return s;
         }
+        // v1.1: a one-time password (6 letters/digits) - its code changes every time, so there's nothing to save
+        public static bool IsOneTime(string pw)
+        {
+            var c = (pw ?? "").Trim().Replace(" ", "").Replace("-", "").Replace("\t", "");
+            if (c.Length != 6) return false; foreach (var ch in c) if (!(ch < 128 && char.IsLetterOrDigit(ch))) return false; return true;
+        }
         public static string NormCode(string c) { var sb = new StringBuilder(); foreach (var ch in c ?? "") if (ch >= '0' && ch <= '9') sb.Append(ch); return sb.ToString(); }
         public static byte[] PasswordKey(string password, string code)
         {
