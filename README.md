@@ -52,6 +52,12 @@ end-to-end encrypted.
 
 ## What's new
 
+- **1.3** - **Direct connection** when both PCs are on the same network: after the usual secure start through your relay,
+  the picture, input, chat, files and drawing go straight between the two PCs - faster and smoother. The PC being helped
+  connects *out* to the helper's PC (so it never shows a firewall question; the helper's PC may ask once to allow
+  Hallow Assist on private networks). Same end-to-end encryption; only the path changes. Anything that doesn't work
+  stays on the relay. The viewer shows "direct" or "via relay". Switch it off in Settings. App to app only (a browser
+  can't take a direct connection).
 - **1.2** - **Online dots** in Your PCs (green = waiting for you, amber = someone is connected, grey = offline; your relay
   only ever answers this for unattended codes). **Connection history** on the PC being helped (Settings > Connection
   history: who, when, how long, whether they used the mouse and keyboard, files received). **Draw on their screen** -

@@ -254,6 +254,7 @@ namespace HallowAssist
             unattendedInfo = Ui.Muted(UnattendedText(), 11.5, 0); unattendedInfo.Margin = new Thickness(52, 0, 0, 4);
             ub.Children.Add(unattendedInfo);
             sp.Children.Add(ub);
+            sp.Children.Add(Ui.Switch("Connect directly when both PCs are on the same network - faster and smoother (the helper's PC may ask once to allow Hallow Assist on private networks)", !c.S.DirectOff, v => { c.S.DirectOff = !v; c.S.Save(); }));
             var row = Ui.Row(Ui.Btn("Check for updates", () => c.CheckForUpdate(true)), Ui.Btn("Connection history", () => c.ShowHistory()), Ui.Btn("Open downloads folder", () => { try { System.IO.Directory.CreateDirectory(Transfers.DownloadFolder()); System.Diagnostics.Process.Start("explorer.exe", "\"" + Transfers.DownloadFolder() + "\""); } catch { } }));
             row.Margin = new Thickness(0, 8, 0, 8); sp.Children.Add(row);
             return sp;

@@ -186,7 +186,7 @@ namespace HallowAssist
             var now = DateTime.UtcNow; var secs = Math.Max(0.5, (now - lastStats).TotalSeconds);
             var fps = (v.Frames - lastFrames) / secs; var kbps = (v.FrameBytes - lastBytes) * 8 / secs / 1000;
             lastFrames = v.Frames; lastBytes = v.FrameBytes; lastStats = now;
-            if (v.State == ViewerState.Connected) stats.Text = fps.ToString("0") + " fps  ·  " + (kbps >= 1000 ? (kbps / 1000).ToString("0.0") + " Mbit/s" : kbps.ToString("0") + " kbit/s") + "  ·  " + v.RttMs + " ms" + (v.QualityLabel != "" ? "  ·  " + v.QualityLabel : "") + "  ·  encrypted";
+            if (v.State == ViewerState.Connected) stats.Text = fps.ToString("0") + " fps  ·  " + (kbps >= 1000 ? (kbps / 1000).ToString("0.0") + " Mbit/s" : kbps.ToString("0") + " kbit/s") + "  ·  " + v.RttMs + " ms" + (v.QualityLabel != "" ? "  ·  " + v.QualityLabel : "") + (v.Direct ? "  ·  direct" : "  ·  via relay") + "  ·  encrypted";
         }
         void OpenChat()
         {
@@ -208,7 +208,7 @@ namespace HallowAssist
             var src = new SyntheticSource(); System.Collections.Generic.List<System.Drawing.Rectangle> d; src.Capture(0, 1, out d);
             lock (v.ScreenLock) { v.Screen.Resize(src.FrameW, src.FrameH); Buffer.BlockCopy(src.Frame, 0, v.Screen.Pixels, 0, src.Frame.Length); }
             dirty = new System.Drawing.Rectangle(0, 0, src.FrameW, src.FrameH); Paint();
-            stats.Text = "15 fps  ·  2.4 Mbit/s  ·  38 ms  ·  good  ·  encrypted";
+            stats.Text = "15 fps  ·  2.4 Mbit/s  ·  38 ms  ·  good  ·  direct  ·  encrypted";
             Refresh();
         }
     }

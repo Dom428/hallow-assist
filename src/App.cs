@@ -19,14 +19,14 @@ using WF = System.Windows.Forms;
 [assembly: AssemblyTitle("Hallow Assist")]
 [assembly: AssemblyProduct("Hallow Assist")]
 [assembly: AssemblyDescription("Remote help for friends and family")]
-[assembly: AssemblyVersion("1.2.0.0")]
-[assembly: AssemblyFileVersion("1.2.0.0")]
+[assembly: AssemblyVersion("1.3.0.0")]
+[assembly: AssemblyFileVersion("1.3.0.0")]
 
 namespace HallowAssist
 {
     public static class Program
     {
-        public const string Version = "1.2";
+        public const string Version = "1.3";
         [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr v);
 
         [STAThread]
@@ -201,6 +201,7 @@ namespace HallowAssist
         }
         void StartHost(HostOptions o)
         {
+            o.AllowDirect = !S.DirectOff;
             o.Screen = AssistSettings.Fake ? new SyntheticSource() : ScreenSource.Create();
             o.Input = AssistSettings.Fake ? (IInputSink)new RecordingSink(AssistSettings.Dir) : new SendInputSink();
             o.Clip = AssistSettings.TestDir != null ? (IClip)new FileClip(Path.Combine(AssistSettings.Dir, "clipboard.txt")) : new WpfClip(ui);
@@ -503,6 +504,7 @@ namespace HallowAssist
         void StartViewer(ViewerSession v, string code)
         {
             v.Clip = AssistSettings.TestDir != null ? (IClip)new FileClip(Path.Combine(AssistSettings.Dir, "clipboard.txt")) : new WpfClip(ui);
+            v.AllowDirect = !S.DirectOff;
             Viewer = v;
             v.Changed += () => ui.BeginInvoke(new Action(() => { if (main != null) main.RefreshHelpSomeone(); WriteStatus(); UpdateTrayText(); }));
             v.Chat += t => Log("chat from host: " + t);
@@ -662,11 +664,11 @@ namespace HallowAssist
         {
             var t = new Dictionary<string, object>();
             var h = host;
-            if (h != null) { t["host"] = h.State.ToString(); t["helper"] = h.HelperName; t["control"] = h.Control; t["clipboard"] = h.Clipboard; t["safety"] = h.Safety; t["framesSent"] = h.FramesSent; t["wrong"] = h.WrongPasswords; t["endReason"] = h.EndReason; t["unattendedHost"] = h.Unattended; t["inputEvents"] = h.InputEvents; t["screen"] = h.ScreenKind; }
+            if (h != null) { t["host"] = h.State.ToString(); t["helper"] = h.HelperName; t["control"] = h.Control; t["clipboard"] = h.Clipboard; t["safety"] = h.Safety; t["framesSent"] = h.FramesSent; t["wrong"] = h.WrongPasswords; t["endReason"] = h.EndReason; t["unattendedHost"] = h.Unattended; t["inputEvents"] = h.InputEvents; t["screen"] = h.ScreenKind; t["direct"] = h.Direct; t["drawStrokes"] = DrawStrokes; }
             t["consentPending"] = pendingConsent != null; t["bar"] = barVisible; t["hotkey"] = hotkeyRegistered; t["panics"] = Panics; t["startsWithWindows"] = StartsWithWindows();
             lock (pendingFiles) t["filesPending"] = pendingFiles.Count;
             var v = Viewer;
-            if (v != null) { t["viewer"] = v.State.ToString(); t["viewerSafety"] = v.Safety; t["frames"] = v.Frames; t["controlAllowed"] = v.ControlAllowed; t["clipboardAllowed"] = v.ClipboardAllowed; t["banner"] = v.Banner; t["viewerEnd"] = v.EndReason; t["monitors"] = v.Monitors.Length; t["monitor"] = v.Monitor; t["lastClip"] = v.LastClipFromThem; t["screenW"] = v.Screen.W; t["screenH"] = v.Screen.H; }
+            if (v != null) { t["viewer"] = v.State.ToString(); t["viewerSafety"] = v.Safety; t["frames"] = v.Frames; t["controlAllowed"] = v.ControlAllowed; t["clipboardAllowed"] = v.ClipboardAllowed; t["banner"] = v.Banner; t["viewerEnd"] = v.EndReason; t["monitors"] = v.Monitors.Length; t["monitor"] = v.Monitor; t["lastClip"] = v.LastClipFromThem; t["screenW"] = v.Screen.W; t["screenH"] = v.Screen.H; t["viewerDirect"] = v.Direct; }
             lock (log) t["log"] = log.ToArray();
             return t;
         }
@@ -723,6 +725,8 @@ namespace HallowAssist
             switch (cmd)
             {
                 case "test-gethelp": GetHelp(); return "ok";
+                case "test-direct": DirectNet.TestLoopback = a.Length > 0 && a[0] == "on"; return "ok";
+                case "test-view-draw": { var p = a.Select(x => int.Parse(x)).ToArray(); Viewer.SendDraw(4242, p); return "ok"; }
                 case "test-code": return host == null || host.Code == null ? "error no code yet" : "ok " + Family.Json(new Dictionary<string, object> { { "code", host.Code }, { "password", host.Password } });
                 case "test-consent":
                     {

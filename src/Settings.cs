@@ -50,6 +50,7 @@ namespace HallowAssist
         [DataMember] public string UnattendedCode;     // shown in the window so you can note it down
         [DataMember] public string UnattendedLockedUntil;
         [DataMember] public List<SavedPc> Pcs;   // v1.1: Your PCs
+        [DataMember] public bool DirectOff;      // v1.3: never connect directly (always through the relay)
 
         public static AssistSettings Load()
         {

@@ -32,6 +32,10 @@ PRIVACY
 - End-to-end encrypted: your relay passes sealed messages along and can't see screens,
   keys, chat or files. Crash reports stay on this PC. Nothing else is sent anywhere.
 
+WHAT'S NEW IN 1.3
+- Direct connection on the same network: faster and smoother, same encryption. The helper's PC
+  may ask once to allow Hallow Assist on private networks. Settings has a switch to turn it off.
+
 WHAT'S NEW IN 1.2
 - Online dots in Your PCs, a connection history on the PC being helped (Settings),
   drawing on their screen (app and browser), and Restart their PC for your own PCs -

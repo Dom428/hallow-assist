@@ -371,6 +371,27 @@ await step('browser viewer in headless Edge (phone, landscape): connect, consent
   } finally { edge.kill(); await sleep(500); try { spawnSync('taskkill', ['/F', '/T', '/PID', String(edge.pid)], { windowsHide: true }); } catch { } }
 });
 
+await step('direct connection (v1.3): on the same network the PCs talk directly - frames, input, chat and drawing no longer pass through the relay', async () => {
+  cmd('host', 'test-direct on'); cmd('viewer', 'test-direct on');
+  try {
+    sess = await newHostSession();
+    await connectViewer(sess.code, sess.password); await until(() => T('host').consentPending, 10000, 'consent');
+    cmd('host', 'test-consent allow control');
+    await until(() => T('viewer').frames > 0, 10000, 'frames');
+    await until(() => T('host').direct === true && T('viewer').viewerDirect === true, 20000, 'both sides direct');
+    await sleep(500);
+    const relayedSealed = () => forwarded.filter(f => f.data[0] === P.T.SEALED).length;
+    const before = relayedSealed(), f0 = T('viewer').frames, n0 = inputLog().length;
+    cmd('viewer', 'test-view-monitor 1'); await until(() => T('viewer').monitor === 1 && T('viewer').frames > f0, 8000, 'new frames over the direct link');
+    cmd('viewer', 'test-view-move 32768 32768'); await until(() => inputLog().slice(n0).some(e => e.t === 'move'), 5000, 'input over the direct link');
+    cmd('viewer', 'test-view-chat direct hello'); await until(() => T('host').log.some(l => l.includes('chat from helper: direct hello')), 5000, 'chat over the direct link');
+    const s0 = T('host').drawStrokes; cmd('viewer', 'test-view-draw 100 100 30000 30000'); await until(() => T('host').drawStrokes > s0, 5000, 'drawing reached the host');
+    assert.equal(relayedSealed(), before, 'nothing sealed went through the relay after the switch');
+    cmd('viewer', 'test-view-monitor 0'); await until(() => T('viewer').monitor === 0, 5000, 'back to monitor 1');
+    cmd('host', 'test-host-end'); await until(() => T('viewer').viewer === 'Ended', 8000, 'viewer told the session ended');
+  } finally { cmd('host', 'test-direct off'); cmd('viewer', 'test-direct off'); }
+});
+
 await step('closing the app (host) ends a connected session; the helper is told', async () => {
   sess = await newHostSession();
   await connectViewer(sess.code, sess.password); await until(() => T('host').consentPending, 10000, 'consent');

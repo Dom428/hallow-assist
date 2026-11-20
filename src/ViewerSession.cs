@@ -43,7 +43,7 @@ namespace HallowAssist
         public ViewerSession(Uri relay, string code, string password, string name)
         {
             this.relay = relay; this.code = Kdf.NormCode(code); this.password = password; this.name = string.IsNullOrWhiteSpace(name) ? "Helper" : name.Trim();
-            Files = new Transfers(p => SendPlain(p), () => link == null ? 0 : link.Queued, () => State == ViewerState.Connected, Transfers.DownloadFolder());
+            Files = new Transfers(p => SendPlain(p), () => { var t = tx; return t != null ? t.Queued : link == null ? 0 : link.Queued; }, () => State == ViewerState.Connected, Transfers.DownloadFolder());
             Files.Note += s => Say(s);
         }
         void Fire() { var h = Changed; if (h != null) try { h(); } catch { } }
@@ -117,13 +117,47 @@ namespace HallowAssist
             {
                 if (!Kdf.Equal(Kdf.Slice(b, 1, 32), keys.ConfirmH)) { End("Couldn't verify their PC - the connection may not be safe.", false); return; }
                 chan = new Channel(keys, false); Safety = keys.Safety; State = ViewerState.Waiting;
+                var tr = new Transport(link); tr.Deliver = OnSealed; tr.Overflow = r => DirectFailed(r); tx = tr;
                 Status = "Connected securely. Waiting for them to click Allow...";
                 SendJson("t", "hello", "name", name.Length > 40 ? name.Substring(0, 40) : name, "client", "app", "version", Program.Version);
                 Fire(); return;
             }
             End("Unexpected message - closed to be safe.", false);
         }
-        void SendPlain(byte[] plain) { var c = chan; var l = link; if (c == null || l == null || State == ViewerState.Ended) return; l.SendSealed(() => c.Seal(plain), plain.Length + 25); }
+        void SendPlain(byte[] plain) { var c = chan; var t = tx; if (c == null || t == null || State == ViewerState.Ended) return; t.SendSealed(() => c.Seal(plain), plain.Length + 25); }
+
+        // ---- v1.3: direct connection on the same network. This side listens (the helper's PC may ask once whether Hallow
+        // Assist may use private networks); their PC connects out and proves itself with the token sent in the sealed channel.
+        Transport tx; DirectLink direct; int directOffered;
+        public bool AllowDirect = true;
+        public bool Direct { get { var t = tx; return t != null && t.IsDirect; } }
+        void OfferDirect()
+        {
+            if (!AllowDirect || Interlocked.Exchange(ref directOffered, 1) == 1) return;
+            var c = chan; var t = tx; if (c == null || t == null) return;
+            new Thread(() =>
+            {
+                using (var l = new DirectListener())
+                {
+                    if (l.Endpoints.Count == 0) return;   // not on a home network: the relay it is
+                    SendJson("t", "direct-offer", "addrs", l.Endpoints.ToArray(), "token", Convert.ToBase64String(l.Token));
+                    var d = l.Accept(12000);
+                    if (d == null) { Say("Their PC couldn't reach this one directly - staying on the relay."); return; }
+                    if (State != ViewerState.Connected) { d.Close("too late"); return; }
+                    d.Frame += t.OnDirectFrame;
+                    d.Closed += r => { if (direct == d) DirectFailed(r); };
+                    direct = d; d.Start();
+                    if (t.SwitchTo(d, () => c.Seal(Msg.JsonMsg("t", "switch")))) { Say("Connected directly over your network."); Fire(); }
+                    else { direct = null; d.Close("switch didn't happen"); }
+                }
+            }) { IsBackground = true, Name = "direct listen" }.Start();
+        }
+        void DirectFailed(string why)
+        {
+            var d = direct; direct = null; if (d != null) d.Close(why);
+            if (State == ViewerState.Ended) return;
+            End("The direct connection dropped (" + why + "). Connect again.", false);
+        }
         void SendJson(params object[] kv) { SendPlain(Msg.JsonMsg(kv)); }
 
         void OnSealed(byte[] b)
@@ -146,6 +180,7 @@ namespace HallowAssist
                         foreach (var x in (System.Collections.ArrayList)mo) { var d = x as Dictionary<string, object>; if (d != null) list.Add(new MonitorInfo { W = (int)Msg.Num(d, "w"), H = (int)Msg.Num(d, "h"), Primary = Msg.Bool(d, "primary") }); }
                     Monitors = list.ToArray();
                     State = ViewerState.Connected; Status = "Connected."; Banner = ControlAllowed ? "" : "View only - they haven't allowed control.";
+                    OfferDirect();
                     Fire(); break;
                 case "control": ControlAllowed = Msg.Bool(m, "on"); Banner = ControlAllowed ? "" : "They turned off control - you can still see their screen."; Fire(); break;
                 case "clipboard": ClipboardAllowed = Msg.Bool(m, "on"); lastClip = null; Fire(); break;
@@ -158,6 +193,7 @@ namespace HallowAssist
                 case "pong": RttMs = (int)Math.Max(0, (long)(DateTime.UtcNow - new DateTime(1970, 1, 1)).TotalMilliseconds - Msg.Num(m, "ts")); break;
                 case "q": QualityLabel = Msg.Str(m, "label") ?? ""; Fire(); break;
                 case "bye": End(Msg.Str(m, "reason") ?? "They ended the session.", false); break;
+                case "switch": { var t = tx; if (t != null) t.PeerSwitched(); break; }
                 case "restarting": Restarting = true; Status = "Their PC is restarting - Hallow Assist reconnects when it's back."; Fire(); break;
                 case "note": { var t = Msg.Str(m, "text"); if (!string.IsNullOrEmpty(t)) Say(t); break; }
                 default: Files.Handle(m); break;
@@ -206,6 +242,7 @@ namespace HallowAssist
             if (tellPeer && chan != null) SendJson("t", "bye", "reason", "The helper ended the session.");
             State = ViewerState.Ended; EndReason = reason; Status = reason;
             Files.CancelAll();
+            var dl = direct; direct = null; if (dl != null) dl.Close("session ended");
             if (link != null) link.Close(reason);
             if (ecdh != null) ecdh.Dispose();
             Fire();

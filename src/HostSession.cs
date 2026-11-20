@@ -20,7 +20,8 @@ namespace HallowAssist
     public class HostOptions
     {
         public Uri Relay; public string Quality = "auto";
-        public bool Unattended; public string PersistSecret; public byte[] UnattendedKey;   // unattended: the derived key, never the password
+        public bool Unattended; public string PersistSecret; public byte[] UnattendedKey;
+        public bool AllowDirect = true;   // v1.3: connect out to the helper's PC directly when it's on the same network   // unattended: the derived key, never the password
         public ScreenSource Screen; public IInputSink Input; public IClip Clip; public string DownloadDir;
     }
 
@@ -28,6 +29,8 @@ namespace HallowAssist
     {
         readonly HostOptions o;
         RelayLink link; Channel chan; EcdhKey ecdh; SessionKeys keys; byte[] pwKey; byte[] viewerPub;
+        Transport tx; DirectLink direct; int directTried;   // v1.3
+        public bool Direct { get { var t = tx; return t != null && t.IsDirect; } }
         public volatile HostState State = HostState.Starting;
         public string Code, Password, HelperName, HelperClient, Safety, EndReason;
         public volatile bool Control, Clipboard;
@@ -51,7 +54,7 @@ namespace HallowAssist
         public HostSession(HostOptions opts)
         {
             o = opts;
-            Files = new Transfers(p => SendPlain(p), () => link == null ? 0 : link.Queued, () => State == HostState.Connected, opts.DownloadDir ?? Transfers.DownloadFolder());
+            Files = new Transfers(p => SendPlain(p), () => Queued, () => State == HostState.Connected, opts.DownloadDir ?? Transfers.DownloadFolder());
             Files.Note += s => Say(s);
         }
         void Fire() { var h = Changed; if (h != null) try { h(); } catch { } }
@@ -105,6 +108,7 @@ namespace HallowAssist
             handshakeId++; consentId++;
             if (chan != null) { chan.Dispose(); chan = null; }
             if (ecdh != null) { ecdh.Dispose(); ecdh = null; }
+            var d = direct; direct = null; tx = null; directTried = 0; if (d != null) d.Close("session reset");
             keys = null; viewerPub = null; Control = false; Clipboard = false; HelperName = null; Safety = null;
             ReleaseAll(); Files.CancelAll();
         }
@@ -146,6 +150,7 @@ namespace HallowAssist
                     }
                     link.SendBinary(Kdf.Cat(new[] { Msg.HConfirm }, keys.ConfirmH));
                     chan = new Channel(keys, true); Safety = keys.Safety;
+                    var t = new Transport(link); t.Deliver = OnSealed; t.Overflow = r => DirectFailed(r); tx = t;
                     var hid = handshakeId;
                     new Thread(() => { Thread.Sleep(15000); lock (gate) if (handshakeId == hid && State == HostState.Checking) Kick("no hello"); }) { IsBackground = true }.Start();
                     return;
@@ -156,8 +161,40 @@ namespace HallowAssist
 
         void SendPlain(byte[] plain)
         {
-            var c = chan; var l = link; if (c == null || l == null) return;
-            l.SendSealed(() => c.Seal(plain), plain.Length + 25);
+            var c = chan; var t = tx; if (c == null || t == null) return;
+            t.SendSealed(() => c.Seal(plain), plain.Length + 25);
+        }
+        long Queued { get { var t = tx; return t != null ? t.Queued : link == null ? 0 : link.Queued; } }
+
+        // ---- v1.3: direct connection (the helper's app offers its home-network address; this PC connects out)
+        void TryDirect(Dictionary<string, object> m)
+        {
+            if (!o.AllowDirect || State != HostState.Connected || Interlocked.Exchange(ref directTried, 1) == 1) return;
+            object a; var addrs = new List<string>();
+            if (m.TryGetValue("addrs", out a) && a is System.Collections.ArrayList) foreach (var x in (System.Collections.ArrayList)a) addrs.Add(Convert.ToString(x));
+            byte[] token; try { token = Convert.FromBase64String(Msg.Str(m, "token") ?? ""); } catch { return; }
+            var eps = DirectNet.ParseEndpoints(addrs);
+            var c = chan; var t = tx; var hid = handshakeId;
+            if (eps.Count == 0 || token.Length != DirectNet.TokenBytes || c == null || t == null) return;
+            new Thread(() =>
+            {
+                var d = DirectConnector.Connect(eps, token, 2500);
+                if (d == null) { Say("Couldn't reach the helper's PC directly - staying on the relay."); return; }
+                lock (gate) if (handshakeId != hid || State != HostState.Connected) { d.Close("too late"); return; }
+                d.Frame += t.OnDirectFrame;
+                d.Closed += r => { if (direct == d) DirectFailed(r); };
+                direct = d; d.Start();
+                if (t.SwitchTo(d, () => c.Seal(Msg.JsonMsg("t", "switch")))) { Say("Connected directly over your network."); Fire(); }
+                else { direct = null; d.Close("switch didn't happen"); }
+            }) { IsBackground = true, Name = "direct connect" }.Start();
+        }
+        void DirectFailed(string why)
+        {
+            var d = direct; direct = null; if (d != null) d.Close(why);
+            if (State != HostState.Connected) return;
+            Say("The direct connection dropped (" + why + ").");
+            if (o.Unattended) { lock (gate) Kick("direct connection dropped"); }
+            else End("The direct connection to your helper dropped. Click Get help again to reconnect.", false);
         }
         void SendJson(params object[] kv) { SendPlain(Msg.JsonMsg(kv)); }
 
@@ -206,6 +243,8 @@ namespace HallowAssist
                 case "monitor": { var i = (int)Msg.Num(m, "i"); if (i >= 0 && i < o.Screen.Monitors().Length) { monitor = i; keyframe = true; } break; }
                 case "quality": { var q = Msg.Str(m, "q"); if (q == "auto" || q == "best" || q == "balanced" || q == "fast") { quality = q; var f = Quality.Fixed(q); if (f >= 0) SetLevel(f); } break; }
                 case "refresh": keyframe = true; break;
+                case "direct-offer": TryDirect(m); break;
+                case "switch": { var t = tx; if (t != null) t.PeerSwitched(); break; }
                 case "ping": SendJson("t", "pong", "ts", Msg.Num(m, "ts")); break;
                 case "chat": { var text = Msg.Str(m, "text") ?? ""; if (text.Length > 2000) text = text.Substring(0, 2000); var h = Chat; if (h != null) h(text); break; }
                 case "clip": if (Clipboard && o.Clip != null) { var text = Msg.Str(m, "text") ?? ""; if (text.Length <= 1000000) { lastClip = text; o.Clip.Set(text); Say("The helper put text on your clipboard."); } } break;
@@ -285,6 +324,7 @@ namespace HallowAssist
             lock (gate) { State = HostState.Ended; EndReason = reason; ReleaseAll(); Files.CancelAll(); }
             Crash.Secrets = new string[0];
             Password = null;
+            var dl = direct; direct = null; if (dl != null) dl.Close("session ended");
             if (link != null) link.Close(reason);
             Fire();
             var h = Ended; if (h != null) try { h(reason); } catch { }
@@ -385,7 +425,7 @@ namespace HallowAssist
                     }
                     int interval = quality == "fast" ? 50 : 66;
                     int waiting; lock (inflight) waiting = inflight.Count;
-                    if (now - lastFrame < interval || waiting >= 3 || link.Queued > 1024 * 1024) { Thread.Sleep(8); continue; }
+                    if (now - lastFrame < interval || waiting >= 3 || Queued > 1024 * 1024) { Thread.Sleep(8); continue; }
                     lastFrame = now;
                     bool key = keyframe; keyframe = false;
                     List<Rectangle> dirty;

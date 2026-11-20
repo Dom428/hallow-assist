@@ -162,6 +162,42 @@ namespace HallowAssist.Tests
         {
             var s = new AssistSettings();
             Ok(!s.Unattended && s.UnattendedSecret == null, "unattended access is off by default");
+            // v1.3: direct connection
+            {
+                Func<string, bool> priv = x => DirectNet.IsPrivate(System.Net.IPAddress.Parse(x));
+                Ok(priv("192.168.1.20") && priv("10.0.0.5") && priv("172.16.0.1") && priv("172.31.255.1") && !priv("172.32.0.1") && !priv("8.8.8.8") && !priv("127.0.0.1") && !priv("169.254.1.1") && !DirectNet.IsPrivate(System.Net.IPAddress.IPv6Loopback),
+                    "direct: only home-network IPv4 addresses (no internet, no loopback outside tests)");
+                var eps = DirectNet.ParseEndpoints(new[] { "192.168.1.20:50123", "8.8.8.8:50000", "192.168.1.21:80", "10.0.0.2:70000", "junk", null, "10.0.0.3:50001", "10.0.0.4:50002", "10.0.0.5:50003", "10.0.0.6:50004" });
+                Ok(eps.Count == DirectNet.MaxEndpoints && eps[0].ToString() == "192.168.1.20:50123" && eps.All(e => e.Port > 1024 && DirectNet.IsPrivate(e.Address)), "direct: offered addresses are checked (home network, port above 1024, at most 4)");
+                // framing over a real local socket, both ways, including an empty-ish and a 1 MB message
+                var lis = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0); lis.Start();
+                var cs = new System.Net.Sockets.Socket(System.Net.Sockets.AddressFamily.InterNetwork, System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+                cs.Connect((System.Net.IPEndPoint)lis.LocalEndpoint); var ss = lis.AcceptSocket(); lis.Stop();
+                var a = new DirectLink(cs); var b = new DirectLink(ss); var gotB = new List<byte[]>(); var gotA = new List<byte[]>(); var ev = new System.Threading.CountdownEvent(3);
+                b.Frame += f => { lock (gotB) gotB.Add(f); ev.Signal(); }; a.Frame += f => { lock (gotA) gotA.Add(f); ev.Signal(); };
+                a.Start(); b.Start();
+                var big = new byte[1024 * 1024]; new Random(7).NextBytes(big);
+                a.SendSealed(() => new byte[] { 1 }, 1); a.SendSealed(() => big, big.Length); b.SendSealed(() => new byte[] { 9, 8, 7 }, 3);
+                ev.Wait(5000);
+                Ok(gotB.Count == 2 && gotB[0].Length == 1 && gotB[1].SequenceEqual(big) && gotA.Count == 1 && gotA[0].SequenceEqual(new byte[] { 9, 8, 7 }), "direct: messages arrive whole and in order, both ways");
+                var closed = new System.Threading.ManualResetEvent(false); b.Closed += r => closed.Set(); a.Close("test"); Ok(closed.WaitOne(3000), "direct: the other end notices when the link closes");
+                // the hand-over keeps the counter order even while another thread keeps sending
+                var relay = new SlowSender(3); var dir = new SlowSender(0); var tr = new Transport(relay); int ctr = 0; object cl = new object();
+                Func<byte[]> seal = () => { lock (cl) { ctr++; return BitConverter.GetBytes(ctr); } };
+                for (int i = 0; i < 20; i++) tr.SendSealed(seal, 4);
+                var pump = new System.Threading.Thread(() => { for (int i = 0; i < 200; i++) { tr.SendSealed(seal, 4); System.Threading.Thread.Sleep(1); } }); pump.Start();
+                System.Threading.Thread.Sleep(20);
+                bool sw = tr.SwitchTo(dir, () => { var x = seal(); lock (relay.Out) relay.SwitchAt = BitConverter.ToInt32(x, 0); return x; });
+                pump.Join(); System.Threading.Thread.Sleep(300);
+                var r1 = relay.Numbers(); var d1 = dir.Numbers();
+                Ok(sw && tr.IsDirect && r1.Count + d1.Count == 221 && r1.SequenceEqual(Enumerable.Range(1, r1.Count)) && d1.SequenceEqual(Enumerable.Range(r1.Count + 1, d1.Count)) && r1.Last() == relay.SwitchAt && d1.Count > 0,
+                    "direct: switching paths keeps every counter in order (relay first, \"switch\" last on the relay, the rest direct)");
+                // receiving: what comes directly waits for the other side's switch
+                var delivered = new List<int>(); var rt = new Transport(new SlowSender(0)); rt.Deliver = f => delivered.Add(f[0]);
+                rt.OnDirectFrame(new byte[] { 5 }); rt.OnDirectFrame(new byte[] { 6 }); bool waited = delivered.Count == 0;
+                delivered.Add(4); rt.PeerSwitched(); rt.OnDirectFrame(new byte[] { 7 });
+                Ok(waited && delivered.SequenceEqual(new[] { 4, 5, 6, 7 }) && rt.PeerIsDirect, "direct: messages that arrive directly wait until the relay's switch has been read");
+            }
             // v1.2: online status, history, drawing, restart
             {
                 var st = RelayStatus.Parse(Msg.FromJson("{\"t\":\"status\",\"online\":[\"715390246\"],\"busy\":[\"302118457\"]}"), new[] { "715390246", "302118457", "111222333" });
@@ -222,5 +258,19 @@ namespace HallowAssist.Tests
                 return got ? 0 : 1;
             }
         }
+    }
+
+    // tests: a sender that seals on its own thread, optionally slowly (like the relay link under load)
+    public class SlowSender : ISealedSender
+    {
+        readonly System.Collections.Concurrent.BlockingCollection<Func<byte[]>> q = new System.Collections.Concurrent.BlockingCollection<Func<byte[]>>();
+        long queued; public readonly List<byte[]> Out = new List<byte[]>(); public int SwitchAt;
+        public SlowSender(int delayMs)
+        {
+            new System.Threading.Thread(() => { foreach (var m in q.GetConsumingEnumerable()) { if (delayMs > 0) System.Threading.Thread.Sleep(delayMs); var b = m(); lock (Out) Out.Add(b); } }) { IsBackground = true }.Start();
+        }
+        public void SendSealed(Func<byte[]> make, int sizeHint) { System.Threading.Interlocked.Add(ref queued, sizeHint); q.Add(() => { System.Threading.Interlocked.Add(ref queued, -sizeHint); return make(); }); }
+        public long Queued { get { return System.Threading.Interlocked.Read(ref queued); } }
+        public List<int> Numbers() { lock (Out) return Out.Select(b => BitConverter.ToInt32(b, 0)).ToList(); }
     }
 }

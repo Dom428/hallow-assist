@@ -11,7 +11,7 @@ using System.Threading.Tasks;
 
 namespace HallowAssist
 {
-    public sealed class RelayLink : IDisposable
+    public sealed class RelayLink : ISealedSender, IDisposable
     {
         readonly ClientWebSocket ws = new ClientWebSocket();
         readonly BlockingCollection<Tuple<byte[], bool, Func<byte[]>>> queue = new BlockingCollection<Tuple<byte[], bool, Func<byte[]>>>();
