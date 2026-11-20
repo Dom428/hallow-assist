@@ -52,6 +52,12 @@ end-to-end encrypted.
 
 ## What's new
 
+- **1.2** - **Online dots** in Your PCs (green = waiting for you, amber = someone is connected, grey = offline; your relay
+  only ever answers this for unattended codes). **Connection history** on the PC being helped (Settings > Connection
+  history: who, when, how long, whether they used the mouse and keyboard, files received). **Draw on their screen** -
+  from the app or any browser, lines fade after a few seconds, also in view-only sessions. **Restart their PC** for your
+  own PCs (unattended access): Windows restarts in 10 seconds and Hallow Assist connects again by itself when it's back
+  (after the sign-in, if Windows asks for one). Needs relay 1.2 for the online dots.
 - **1.1** - **Your PCs**: save your own PCs (the ones with unattended access) under Help someone and connect with one
   click. Their password is only remembered if you tick it - as a key made from it, encrypted for your Windows account,
   never the password itself - and a remembered key that stops working is forgotten. Also security and reliability fixes from a review: unattended access really comes back after its 15-minute pause

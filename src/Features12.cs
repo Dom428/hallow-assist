@@ -163,7 +163,7 @@ namespace HallowAssist
         [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
         const int GWL_EXSTYLE = -20, WS_EX_TRANSPARENT = 0x20, WS_EX_TOOLWINDOW = 0x80, WS_EX_NOACTIVATE = 0x08000000, WS_EX_LAYERED = 0x80000;
         readonly Canvas canvas = new Canvas();
-        readonly Dictionary<long, Path> strokes = new Dictionary<long, Path>();
+        readonly Dictionary<long, System.Windows.Shapes.Path> strokes = new Dictionary<long, System.Windows.Shapes.Path>();
         readonly Dictionary<long, PolyLineSegment> segs = new Dictionary<long, PolyLineSegment>();
         readonly ScaleTransform scale = new ScaleTransform(1, 1);   // 0..65535 -> this window's size; the pen keeps its width
         readonly Dictionary<long, DateTime> touched = new Dictionary<long, DateTime>();
@@ -196,14 +196,14 @@ namespace HallowAssist
             if (m == null || pts == null) return;
             if (mon == null || mon.X != m.X || mon.Y != m.Y || mon.W != m.W || mon.H != m.H) { mon = m; Clear(); if (IsVisible) Place(); }
             if (!IsVisible) { Show(); Place(); }
-            Path line; PolyLineSegment seg;
+            System.Windows.Shapes.Path line; PolyLineSegment seg;
             if (!strokes.TryGetValue(id, out line))
             {
                 if (strokes.Count >= 50) Clear();
                 seg = new PolyLineSegment();
                 var fig = new PathFigure { StartPoint = new Point(pts[0], pts[1]), IsFilled = false }; fig.Segments.Add(seg);
                 var geo = new PathGeometry { Transform = scale }; geo.Figures.Add(fig);
-                line = new Path { Data = geo, Stroke = Ui.Accent, StrokeThickness = 5, StrokeLineJoin = PenLineJoin.Round, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round, IsHitTestVisible = false };
+                line = new System.Windows.Shapes.Path { Data = geo, Stroke = Ui.Accent, StrokeThickness = 5, StrokeLineJoin = PenLineJoin.Round, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round, IsHitTestVisible = false };
                 line.Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 6, ShadowDepth = 0, Opacity = 0.7, Color = Colors.Black };
                 strokes[id] = line; segs[id] = seg; canvas.Children.Add(line);
             }

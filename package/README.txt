@@ -32,6 +32,11 @@ PRIVACY
 - End-to-end encrypted: your relay passes sealed messages along and can't see screens,
   keys, chat or files. Crash reports stay on this PC. Nothing else is sent anywhere.
 
+WHAT'S NEW IN 1.2
+- Online dots in Your PCs, a connection history on the PC being helped (Settings),
+  drawing on their screen (app and browser), and Restart their PC for your own PCs -
+  Hallow Assist connects again by itself when it's back. Update your relay to 1.2 for the dots.
+
 WHAT'S NEW IN 1.1
 - Your PCs: save your own PCs (unattended access) and connect with one click.
 - Unattended access really comes back after its 15-minute pause.
