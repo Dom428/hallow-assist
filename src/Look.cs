@@ -100,8 +100,29 @@ namespace HallowAssist
         {
             if (light) xaml = Regex.Replace(xaml, "#[0-9A-Fa-f]{6}\\b", m => { string l; return Palette.TryGetValue(m.Value, out l) ? l : m.Value; });
             xaml = Regex.Replace(xaml, "#F07821", light ? TextOn(accent, "#F6F4FA") : accent, RegexOptions.IgnoreCase);
-            return Accent.ApplyTo(xaml, accent);
+            if (!light) return Accent.ApplyTo(xaml, accent);
+            // v1.12 light: filled accent buttons / chips use the family fill rule (Hallow Toolkit 5.16) - the real accent unless
+            // neither text colour reaches 4.5:1 on it (violet #8B5CF6), then the accent darkened until white text reads
+            var fill = LightFill(accent);
+            xaml = Regex.Replace(xaml, "#1A0E04", FillText(fill), RegexOptions.IgnoreCase);
+            return Accent.ApplyTo(xaml, fill);
         }
+
+        // ---- the family accent rule (copied from Hallow Toolkit 5.16, HallowFamily.ps1 Get-LightTextAccent / Get-AccentFillText /
+        // Get-LightAccentFill): HSL from System.Drawing, lightness lowered 0.01 a step until contrast with `on` >= min
+        public static string Darken(string hex, double min, string on)
+        {
+            if (Contrast(hex, on) >= min) return hex.ToUpperInvariant();
+            var c = Rgb(hex); var dc = System.Drawing.Color.FromArgb(c[0], c[1], c[2]);
+            double h = dc.GetHue() / 360.0, s = (double)dc.GetSaturation(), l = (double)dc.GetBrightness();
+            var cur = hex.ToUpperInvariant();
+            while (l > 0) { l = Math.Max(0.0, l - 0.01); cur = Hsl(h, s, l); if (Contrast(cur, on) >= min) break; }
+            return cur;
+        }
+        // text on a filled accent: dark text or white, whichever reads better
+        public static string FillText(string fill) { return Contrast(fill, "#1E1A26") >= Contrast(fill, "#FFFFFF") ? "#1E1A26" : "#FFFFFF"; }
+        // the light-mode fill for accent buttons
+        public static string LightFill(string accent) { return Contrast(accent, FillText(accent)) >= 4.5 ? accent.ToUpperInvariant() : Darken(accent, 4.5, "#FFFFFF"); }
 
         // contrast (WCAG)
         static double Lin(int v) { var x = v / 255.0; return x <= 0.03928 ? x / 12.92 : Math.Pow((x + 0.055) / 1.055, 2.4); }

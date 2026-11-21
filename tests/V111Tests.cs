@@ -42,7 +42,7 @@ namespace HallowAssist.Tests
             Ok(unmapped.Count == 0, "Theme.xaml: every colour has a light value (" + string.Join(",", unmapped) + ")");
             Ok(!dark.Contains("#F07821") && !light.Contains("#F07821") && dark.Replace("#FFFFFE", "#FFFFFF") == xaml.Replace("#F07821", "#F07820").Replace("#FFFFFE", "#FFFFFF"), "dark theme: unchanged from before (only the markers resolved)");
             var lightPurple = Look.BuildXaml(xaml, "#8B5CF6", true);
-            Ok(lightPurple.Contains("\"CaretBrush\" Value=\"" + Look.TextOn("#8B5CF6", "#F6F4FA") + "\"") && lightPurple.Contains("Value=\"#8B5CF6\""), "light theme: caret / focus line use the darkened accent, filled buttons the real one");
+            Ok(lightPurple.Contains("\"CaretBrush\" Value=\"" + Look.TextOn("#8B5CF6", "#F6F4FA") + "\"") && lightPurple.Contains("Value=\"" + Look.LightFill("#8B5CF6") + "\""), "light theme: caret / focus line use the darkened accent, filled buttons the light fill (v1.12)");
             Ok(Look.Map2("#2A1A20") == "#2A1A20", "the red bar's dark red isn't in the light palette (it stays red)");
 
             // accent as text: darkened in HSL until >= 4.5:1 on white (default orange -> about #B85410)
@@ -89,7 +89,7 @@ namespace HallowAssist.Tests
             var st3 = (AssistSettings)ser.ReadObject(new MemoryStream(System.Text.Encoding.UTF8.GetBytes("{\"RelayUrl\":\"\"}")));
             typeof(AssistSettings).GetMethod("Fix", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(st3, null);
             Ok(st3.AppLook == "hallow", "settings: an old settings.json -> Follow Hallow");
-            Ok(Program.Version == "1.11", "version 1.11");
+            Ok(Program.Version == "1.12", "version 1.12");
         }
     }
 }

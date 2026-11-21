@@ -57,6 +57,10 @@ end-to-end encrypted.
 
 ## What's new
 
+- **1.12** - **Light mode readability fixes**: in light mode, accent buttons and switched-on chips (Allow, Save, Disconnect,
+  Control, Sound...) now always have readable text. With an accent like violet, where neither dark nor white text was clear
+  enough on the real colour, the button uses a slightly darker shade of the accent with white text (the same rule as Hallow
+  Toolkit). Dark mode is unchanged.
 - **1.11** - **Light and dark mode**: Hallow Assist follows the family switch in Hallow Toolkit (**Light / Dark / Same as
   Windows**, kept in `%APPDATA%\Hallow\theme.json` - Assist only reads it). Settings > **Look** can override it for Assist:
   **Follow Hallow** (the default), **Light** or **Dark**. Changes apply at once to every open window, no restart; with
