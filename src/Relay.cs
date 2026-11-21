@@ -35,7 +35,7 @@ namespace HallowAssist
         public void SendBinary(byte[] b) { Enqueue(b, true, null); }
         // seal at send time, in queue order (the counter order = the wire order)
         // v1.3: counted as gone only AFTER it is sealed, so "nothing queued" really means every counter has been taken
-        public void SendSealed(Func<byte[]> make, int sizeHint) { Interlocked.Add(ref queuedBytes, sizeHint); Enqueue(null, true, () => { var b = make(); Interlocked.Add(ref queuedBytes, -sizeHint); return b; }); }
+        public void SendSealed(Func<byte[]> make, int sizeHint) { Interlocked.Add(ref queuedBytes, sizeHint); Enqueue(null, true, () => { try { return make(); } finally { Interlocked.Add(ref queuedBytes, -sizeHint); } }); }
         void Enqueue(byte[] b, bool bin, Func<byte[]> make)
         {
             if (closed != 0) return;
@@ -49,7 +49,9 @@ namespace HallowAssist
             {
                 foreach (var item in queue.GetConsumingEnumerable(cts.Token))
                 {
-                    var data = item.Item1 ?? item.Item3();
+                    byte[] data;
+                    if (item.Item1 != null) data = item.Item1;
+                    else { try { data = item.Item3(); } catch (Exception) { continue; } }   // v1.4: a message of a session that already ended is dropped, not the relay link
                     if (item.Item1 != null) Interlocked.Add(ref queuedBytes, -item.Item1.Length);
                     ws.SendAsync(new ArraySegment<byte>(data), item.Item2 ? WebSocketMessageType.Binary : WebSocketMessageType.Text, true, cts.Token).Wait();
                     Interlocked.Add(ref BytesOut, data.Length);

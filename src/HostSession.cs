@@ -111,7 +111,9 @@ namespace HallowAssist
         void ResetHandshake()
         {
             handshakeId++; consentId++;
-            if (chan != null) { chan.Dispose(); chan = null; }
+            // v1.4: the old channel goes a little later, so what is already queued ("bye") is still sealed and sent - sealing
+            // with a closed key used to fail in the relay sender and drop this PC off the relay (unattended: until the retry)
+            if (chan != null) { var old = chan; chan = null; ThreadPool.QueueUserWorkItem(_ => { Thread.Sleep(5000); old.Dispose(); }); }
             if (ecdh != null) { ecdh.Dispose(); ecdh = null; }
             var d = direct; direct = null; tx = null; directTried = 0; peerFellBack = false; if (d != null) d.Close("session reset");
             StopSound(); SoundShared = false; soundWanted = false;
