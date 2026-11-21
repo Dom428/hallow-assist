@@ -18,7 +18,7 @@ namespace HallowAssist
         [DllImport("user32.dll")] static extern uint MapVirtualKey(uint code, uint type);
         readonly ViewerSession v;
         readonly Image img; readonly Border stage; readonly TextBlock status, banner, stats, safetyText; readonly StackPanel monitors;
-        readonly ToggleButton controlBtn, clipBtn, drawBtn, soundBtn, recBtn; readonly Button sendCopiedBtn, getCopiedBtn; readonly ComboBox quality; readonly Border waitPanel; readonly Button restartBtn;
+        readonly ToggleButton controlBtn, clipBtn, drawBtn, soundBtn, recBtn, theirClipBtn; readonly Button sendCopiedBtn, getCopiedBtn; readonly ComboBox quality; readonly Border waitPanel; readonly Button restartBtn;
         // v1.2: drawing on their screen - strokes go out in small batches while you drag
         bool snapRec;
         bool drawOn, drawing; long strokeId = new Random().Next(1, 1 << 30); readonly System.Collections.Generic.List<int> drawPts = new System.Collections.Generic.List<int>(); DispatcherTimer drawFlush;
@@ -42,6 +42,11 @@ namespace HallowAssist
             clipBtn = new ToggleButton { Content = "Sync clipboard", Style = Ui.S("Chip"), Margin = new Thickness(0, 0, 6, 4), ToolTip = "Copied text goes both ways (only if they turned on clipboard sharing)" };
             clipBtn.Click += (s, e) => v.ClipSync = clipBtn.IsChecked == true;
             bar.Children.Add(clipBtn);
+            // v1.9: your own PCs (unattended sessions): turn clipboard sharing on their PC on / off from here
+            theirClipBtn = new ToggleButton { Content = RemoteClip.ToggleLabel(false), Style = Ui.S("Chip"), Margin = new Thickness(0, 0, 6, 4), ToolTip = RemoteClip.ToggleTip, Visibility = Visibility.Collapsed };
+            theirClipBtn.Click += (s, e) => { var r = v.SetRemoteClipboard(!v.ClipboardAllowed); if (r != null) Note(r); Refresh(); };
+            bar.Children.Add(theirClipBtn);
+
             // v1.4: their PC's sound - off until you turn it on, and only while they share it
             soundBtn = new ToggleButton { Content = "Sound", Style = Ui.S("Chip"), Margin = new Thickness(0, 0, 6, 4), ToolTip = "Hear their PC's sound. Off until you turn it on, and it only plays while they have Share sound on (their red bar says so)." };
             soundBtn.Click += (s, e) => v.SetSound(soundBtn.IsChecked == true);
@@ -189,6 +194,8 @@ namespace HallowAssist
             restartBtn.Visibility = v.HostUnattended ? Visibility.Visible : Visibility.Collapsed; restartBtn.IsEnabled = v.CanRestart;
             controlBtn.IsEnabled = v.ControlAllowed; controlBtn.IsChecked = v.ControlAllowed && controlOn; controlBtn.Content = v.ControlAllowed ? "Control" : "View only";
             clipBtn.IsEnabled = v.ClipboardAllowed; if (!v.ClipboardAllowed) { clipBtn.IsChecked = false; v.ClipSync = false; }
+            theirClipBtn.Visibility = v.HostUnattended ? Visibility.Visible : Visibility.Collapsed;   // v1.9
+            theirClipBtn.IsEnabled = v.State == ViewerState.Connected; theirClipBtn.IsChecked = v.ClipboardAllowed; theirClipBtn.Content = RemoteClip.ToggleLabel(v.ClipboardAllowed);
             soundBtn.IsEnabled = v.State == ViewerState.Connected && v.HostHasSound; soundBtn.IsChecked = v.SoundOn;
             soundBtn.Content = v.SoundOn && !v.HostSharesSound ? "Sound (they haven't shared it)" : "Sound";
             sendCopiedBtn.IsEnabled = getCopiedBtn.IsEnabled = v.State == ViewerState.Connected && v.ClipboardAllowed;

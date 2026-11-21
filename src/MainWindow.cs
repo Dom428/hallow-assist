@@ -271,6 +271,7 @@ namespace HallowAssist
             ub.Children.Add(unattendedInfo);
             if (c.S.Unattended) ub.Children.Add(Ui.Switch("Share this PC's sound in unattended sessions (you can still stop it on the red bar) - off by default", c.S.SoundUnattended, v => { c.S.SoundUnattended = v; c.S.Save(); }));
             if (c.S.Unattended) ub.Children.Add(Ui.Switch(OwnFiles.SettingText, c.S.AskOwnFiles, v => c.SetAskOwnFiles(v)));   // v1.7
+            if (c.S.Unattended) ub.Children.Add(Ui.Switch(RemoteClip.SettingText, !c.S.ClipRemoteOff, v => c.SetClipRemote(v)));   // v1.9
             sp.Children.Add(ub);
             sp.Children.Add(Ui.Switch("Connect directly when both PCs are on the same network - faster and smoother (the helper's PC may ask once to allow Hallow Assist on private networks)", !c.S.DirectOff, v => { c.S.DirectOff = !v; c.S.Save(); }));
             // v1.5: where received files go

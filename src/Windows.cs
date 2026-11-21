@@ -115,14 +115,15 @@ namespace HallowAssist
             }
         }
         // v1.4: the two lines of the bar (also used by the tests, which run without windows)
-        public static string[] Lines(string helper, bool control, bool clipboard, bool unattended, string safety, bool hotkeyOk, bool sound, bool recording = false)
+        // v1.9: clipBy = the helper who turned clipboard sharing on (unattended sessions), null = the person at the PC
+        public static string[] Lines(string helper, bool control, bool clipboard, bool unattended, string safety, bool hotkeyOk, bool sound, bool recording = false, string clipBy = null)
         {
             return new[] { helper + " can see your screen" + (control ? " and control it" : "") + (unattended ? " (unattended access)" : "") + (sound ? "  \u00b7  Sound shared" : "") + (recording ? "  \u00b7  Recording" : ""),
-                "Safety code " + safety + "  \u00b7  " + (hotkeyOk ? "Ctrl+Alt+End disconnects" : "Use Disconnect to end it") + (clipboard ? "  \u00b7  clipboard shared" : "") };
+                "Safety code " + safety + "  \u00b7  " + (hotkeyOk ? "Ctrl+Alt+End disconnects" : "Use Disconnect to end it") + (clipboard ? "  \u00b7  " + (clipBy != null ? RemoteClip.BarText(clipBy) : "clipboard shared") : "") };
         }
-        public void Update(string helper, bool control, bool clipboard, bool unattended, string safety, bool hotkeyOk, bool sound = false, bool soundAvailable = true, bool recording = false)
+        public void Update(string helper, bool control, bool clipboard, bool unattended, string safety, bool hotkeyOk, bool sound = false, bool soundAvailable = true, bool recording = false, string clipBy = null)
         {
-            var l = Lines(helper, control, clipboard, unattended, safety, hotkeyOk, sound, recording);
+            var l = Lines(helper, control, clipboard, unattended, safety, hotkeyOk, sound, recording, clipBy);
             recTag.Visibility = recBtn.Visibility = recording ? Visibility.Visible : Visibility.Collapsed;
             copiedBtn.Visibility = clipboard ? Visibility.Visible : Visibility.Collapsed;
             Title = recording ? "Hallow Assist - RECORDING - someone can see your screen" : "Hallow Assist - someone can see your screen";

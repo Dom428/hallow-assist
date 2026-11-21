@@ -206,6 +206,7 @@ namespace HallowAssist
                     HostSharesSound = Msg.Bool(m, "sound"); HostHasSound = Msg.Bool(m, "soundAvailable");
                     Files.PeerBatches = Msg.Bool(m, "files2"); HostCanRecord = Msg.Bool(m, "rec");   // v1.5
                     HostAsksFiles = Msg.Bool(m, "askFiles");   // v1.6
+                    HostClipRemote = Msg.Bool(m, "clipRemote"); ClipboardByHelper = false; ClipRemoteLast = null;   // v1.9
                     var list = new List<MonitorInfo>();
                     object mo; if (m.TryGetValue("monitors", out mo) && mo is System.Collections.ArrayList)
                         foreach (var x in (System.Collections.ArrayList)mo) { var d = x as Dictionary<string, object>; if (d != null) list.Add(new MonitorInfo { W = (int)Msg.Num(d, "w"), H = (int)Msg.Num(d, "h"), Primary = Msg.Bool(d, "primary") }); }
@@ -215,7 +216,15 @@ namespace HallowAssist
                     if (SoundOn) SendJson("t", "sound-want", "on", true);
                     Fire(); break;
                 case "control": ControlAllowed = Msg.Bool(m, "on"); Banner = ControlAllowed ? "" : "They turned off control - you can still see their screen."; Fire(); break;
-                case "clipboard": ClipboardAllowed = Msg.Bool(m, "on"); lastClip = null; if (!ClipboardAllowed) PullWaiting = false; Fire(); break;
+                case "clipboard": ClipboardAllowed = Msg.Bool(m, "on"); ClipboardByHelper = ClipboardAllowed && Msg.Bool(m, "byHelper"); lastClip = null; if (!ClipboardAllowed) PullWaiting = false; Fire(); break;
+                // v1.9: their PC's answer to turning its clipboard sharing on / off from here
+                case "clip-remote-answer":
+                    {
+                        var on = Msg.Bool(m, "on");
+                        if (Msg.Bool(m, "ok")) { ClipRemoteLast = on ? "on" : "off"; Say(RemoteClip.AnswerText(on)); }
+                        else { ClipRemoteLast = Msg.Str(m, "reason") ?? "refused"; Say(Msg.Str(m, "text") ?? RemoteClip.Refusal(ClipRemoteLast)); }
+                        Fire(); break;
+                    }
                 // v1.6: their answer to "Copy their files here" (Allow / Deny / no answer in 60 s / can't)
                 case "clip-files-answer":
                     {
@@ -320,6 +329,16 @@ namespace HallowAssist
             PullWaiting = true; PullAskedAt = DateTime.UtcNow; PullLast = null;
             SendJson("t", "clip-files-ask"); Fire();
             return FilePull.WaitingText;
+        }
+        // v1.9: turn clipboard sharing on their PC on / off - their PC only accepts it in an unattended session (your own PC,
+        // with its setting on); a PC with 1.8 or earlier doesn't know the request, so it isn't sent at all
+        public bool HostClipRemote, ClipboardByHelper; public string ClipRemoteLast;
+        public string SetRemoteClipboard(bool on)
+        {
+            if (State != ViewerState.Connected) return "Not connected.";
+            if (!HostClipRemote) { ClipRemoteLast = "old"; Fire(); return RemoteClip.OldHostText; }
+            ClipRemoteLast = "asked"; SendJson("t", "clip-remote", "on", on); Fire();
+            return null;
         }
         public bool HostAsksFiles; public volatile bool PullWaiting; public string PullLast; DateTime PullAskedAt;   // v1.6
         void CheckPull()

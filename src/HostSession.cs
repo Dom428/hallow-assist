@@ -27,6 +27,7 @@ namespace HallowAssist
         public ScreenSource Screen; public IInputSink Input; public IClip Clip; public string DownloadDir;
         public IFileClip FileClip;        // v1.5: copied files (only while clipboard sharing is on)
         public bool AskOwnFiles;          // v1.7: unattended sessions ask before copied files leave too (a setting, off by default)
+        public bool ClipRemote = true;    // v1.9: unattended sessions let the helper turn clipboard sharing on and off (a setting, on by default)
     }
 
     public class HostSession
@@ -60,6 +61,9 @@ namespace HallowAssist
         public event Action FilesAskClosed;                                 // v1.6: the question went away (answered, timed out, session over)
         public event Action<string[]> FilesCopied;                          // v1.7: names - copied files left this PC in an unattended session (for the history and the bar)
         public bool AskOwnFiles { get { return o.AskOwnFiles; } set { o.AskOwnFiles = value; } }   // v1.7: the setting (also mid-session)
+        public bool ClipRemote { get { return o.ClipRemote; } set { o.ClipRemote = value; } }      // v1.9: the setting (also mid-session)
+        public volatile string ClipboardBy;                  // v1.9: the helper's name while clipboard sharing is on because they turned it on (null: the person at the PC)
+        public int ClipRemoteAccepted, ClipRemoteRefused;    // v1.9 tests
         void Tell(string s) { var h = Detail; if (h != null) try { h(s); } catch { } }
 
         public HostSession(HostOptions opts)
@@ -131,7 +135,7 @@ namespace HallowAssist
             var d = direct; direct = null; tx = null; directTried = 0; peerFellBack = false; if (d != null) d.Close("session reset");
             StopSound(); SoundShared = false; soundWanted = false;
             RecordingAsked = false; RecordingNoticeShown = false; Files.PeerBatches = false; CancelPull();
-            keys = null; viewerPub = null; Control = false; Clipboard = false; HelperName = null; Safety = null;
+            keys = null; viewerPub = null; Control = false; Clipboard = false; ClipboardBy = null; HelperName = null; Safety = null;
             ReleaseAll(); Files.CancelAll();
         }
         void Kick(string why)
@@ -295,6 +299,8 @@ namespace HallowAssist
                 // is asked first (Allow / Deny, Deny after 60 s). "clip-files-get" is what a 1.5 helper sends: it's asked too.
                 case "clip-files-ask": AskForFiles(false); break;
                 case "clip-files-get": AskForFiles(true); break;
+                // v1.9: the helper turns clipboard sharing on / off - only in an unattended session with the setting on
+                case "clip-remote": RemoteClipboard(Msg.Bool(m, "on")); break;
                 // v1.5: session recording on the helper's side - only once this PC shows "Recording" on the red bar
                 case "rec":
                     if (Msg.Bool(m, "on")) { if (!RecordingAsked) { RecordingAsked = true; RecordingNoticeShown = false; Say((HelperName ?? "Your helper") + " is recording this session - the red bar says Recording. Stop recording there whenever you like."); } }
@@ -332,11 +338,11 @@ namespace HallowAssist
                 }
                 else
                 {
-                    Control = a.Control; Clipboard = a.Clipboard; State = HostState.Connected;
+                    Control = a.Control; Clipboard = a.Clipboard; ClipboardBy = null; State = HostState.Connected;
                     SoundShared = o.Unattended && o.SoundUnattended && o.Audio != null;
                     WrongPasswords = 0;   // v1.1: only wrong tries in a row count towards the unattended pause
                     var mons = o.Screen.Monitors();
-                    SendJson("t", "consent", "allowed", true, "control", Control, "clipboard", Clipboard, "unattended", o.Unattended, "sound", SoundShared, "soundAvailable", o.Audio != null, "files2", true, "rec", true, "askFiles", true,
+                    SendJson("t", "consent", "allowed", true, "control", Control, "clipboard", Clipboard, "unattended", o.Unattended, "sound", SoundShared, "soundAvailable", o.Audio != null, "files2", true, "rec", true, "askFiles", true, "clipRemote", true,
                         "monitors", mons.Select((mm, i) => new Dictionary<string, object> { { "i", i }, { "w", mm.W }, { "h", mm.H }, { "primary", mm.Primary } }).ToArray());
                     monitor = Math.Max(0, Array.FindIndex(mons, mm => mm.Primary));
                     keyframe = true; inflight.Clear();
@@ -357,13 +363,33 @@ namespace HallowAssist
             Control = on; if (!on) ReleaseAll();
             SendJson("t", "control", "on", on); Fire();
         }
-        public void SetClipboard(bool on)
+        public void SetClipboard(bool on) { SetClipboard(on, null); }   // the person at the PC (the red bar)
+        void SetClipboard(bool on, string by)
         {
             if (State != HostState.Connected) return;
-            Clipboard = on; lastClip = null; SendJson("t", "clipboard", "on", on);
+            Clipboard = on; ClipboardBy = on ? by : null; lastClip = null; SendJson("t", "clipboard", "on", on, "byHelper", on && by != null);
             bool old = pullOld;
             if (!on && CancelPull()) PullReply(false, "cancelled", "They turned off clipboard sharing, so nothing was sent.", old);
             Fire();
+        }
+        // v1.9: the helper's request to turn clipboard sharing on / off. Accepted only in an unattended session (one of your own
+        // PCs, connected with its unattended password) while ClipRemote is on; returns null when done, else the reason it's refused.
+        public string RemoteClipboard(bool on)
+        {
+            if (State != HostState.Connected) return "not-connected";
+            string reason = !o.Unattended ? "attended" : !o.ClipRemote ? "setting" : null;
+            if (reason != null)
+            {
+                lock (gate) ClipRemoteRefused++;
+                SendJson("t", "clip-remote-answer", "ok", false, "on", Clipboard, "reason", reason, "text", RemoteClip.Refusal(reason));
+                if (reason == "attended" && on && !Clipboard) Say(RemoteClip.AskedNote(HelperName));
+                Fire(); return reason;
+            }
+            lock (gate) ClipRemoteAccepted++;
+            if (on != Clipboard) SetClipboard(on, HelperName ?? "your helper");   // already on (the person turned it on): left as it is
+            SendJson("t", "clip-remote-answer", "ok", true, "on", on);
+            Say(RemoteClip.HostNote(HelperName, on));
+            Fire(); return null;
         }
 
         // ---- v1.6: the helper's "Copy their files here" - nothing leaves this PC before its person clicks Allow

@@ -494,6 +494,79 @@ await step('copied files (v1.7): an unattended session (your own PC) copies with
   cmd('viewer', 'test-view-end'); await until(() => T('host').host === 'Ended', 5000, 'ended');
 });
 
+await step('remote clipboard (v1.9): in an unattended session the helper turns clipboard sharing on (text and files flow, the bar says who) and off; the setting off refuses it; an older PC gets "That PC needs Hallow Assist 1.9"; an attended session refuses it', async () => {
+  const r = okJson(cmd('host', 'test-unattended-on Correct-Horse-42!'));
+  const cfFile = path.join(dirs.host, 'clipboard-files.txt'); const cfBefore = fs.existsSync(cfFile) ? fs.readFileSync(cfFile) : null;
+  const src = path.join(WORK, 'copied19'); fs.rmSync(src, { recursive: true, force: true }); fs.mkdirSync(src, { recursive: true });
+  const a = path.join(src, 'remote-clip-notes.txt'); fs.writeFileSync(a, 'REMOTE-CLIP-FILE');
+  const da = path.join(dirs.viewer, 'Downloads', 'remote-clip-notes.txt'); fs.rmSync(da, { force: true });
+  try {
+    assert.equal(T('host').clipRemote, true, 'the setting is on by default');
+    await until(() => T('host').host === 'Waiting' && T('host').unattendedHost, 10000, 'unattended waiting');
+    await connectViewer(r.code, 'Correct-Horse-42!', 'Me');
+    await until(() => T('viewer').frames > 0, 10000, 'unattended frames');
+    { const v = T('viewer'); assert.equal(v.clipboardAllowed, false, 'clipboard sharing starts off'); assert.equal(v.hostClipRemote, true, 'the PC says it takes the request'); }
+    // the helper turns it on
+    assert.equal(cmd('viewer', 'test-view-clipremote on'), 'ok');
+    await until(() => T('host').clipboard === true && T('viewer').clipboardAllowed === true && T('viewer').clipRemoteLast === 'on', 5000, 'turned on by the helper');
+    { const h = T('host'); assert.equal(h.clipboardBy, 'Me'); assert.match(h.barText, /Clipboard shared \(turned on by Me\)/, 'the red bar says who turned it on'); assert.equal(h.clipRemoteAccepted, 1); }
+    assert.equal(T('viewer').clipboardByHelper, true);
+    assert.ok(T('host').log.some(l => l.includes('Me turned on clipboard sharing (unattended session)')));
+    // copied text both ways
+    cmd('viewer', 'test-view-clipsync on');
+    fs.writeFileSync(path.join(dirs.host, 'clipboard.txt'), 'first19'); await sleep(1500);
+    fs.writeFileSync(path.join(dirs.host, 'clipboard.txt'), 'FROM-OWN-PC-19');
+    await until(() => T('viewer').lastClip === 'FROM-OWN-PC-19', 6000, 'text: PC -> helper');
+    cmd('viewer', 'test-view-clip TO-OWN-PC-19');
+    await until(() => fs.readFileSync(path.join(dirs.host, 'clipboard.txt'), 'utf8') === 'TO-OWN-PC-19', 5000, 'text: helper -> PC');
+    // copied files: "Copy their files here" with nobody there
+    fs.writeFileSync(cfFile, a);
+    const v0 = T('viewer').filesPending;
+    assert.equal(cmd('viewer', 'test-view-getcopied'), 'ok');
+    await until(() => T('viewer').filesPending === v0 + 1, 5000, 'the files are offered (no question on the PC)');
+    assert.equal(T('host').fileAskPending, false);
+    cmd('viewer', 'test-file-answer accept');
+    await until(() => fs.existsSync(da) && fs.readFileSync(da, 'utf8') === 'REMOTE-CLIP-FILE', 10000, 'the copied file on the helper');
+    // and off again
+    assert.equal(cmd('viewer', 'test-view-clipremote off'), 'ok');
+    await until(() => T('host').clipboard === false && T('viewer').clipboardAllowed === false && T('viewer').clipRemoteLast === 'off', 5000, 'turned off by the helper');
+    assert.equal(T('host').clipboardBy, null); assert.doesNotMatch(T('host').barText, /lipboard shared/);
+    cmd('viewer', 'test-view-clip SHOULD-NOT-ARRIVE-19'); await sleep(800);
+    assert.equal(fs.readFileSync(path.join(dirs.host, 'clipboard.txt'), 'utf8'), 'TO-OWN-PC-19', 'nothing arrives once it is off');
+    // the setting off: refused
+    assert.equal(cmd('host', 'test-clip-remote off'), 'ok'); assert.equal(T('host').clipRemote, false);
+    assert.ok(fs.readFileSync(path.join(dirs.host, 'settings.json'), 'utf8').includes('"ClipRemoteOff":true'), 'the setting is saved');
+    assert.equal(cmd('viewer', 'test-view-clipremote on'), 'ok');
+    await until(() => T('viewer').clipRemoteLast === 'setting', 5000, 'refused: the setting is off');
+    { const h = T('host'); assert.equal(h.clipboard, false); assert.equal(h.clipRemoteRefused, 1); }
+    assert.ok(T('viewer').log.some(l => l.includes("doesn't let its clipboard be turned on remotely")), 'the helper is told why');
+    assert.equal(cmd('host', 'test-clip-remote on'), 'ok');
+    // an older PC (1.8 or earlier: no "clipRemote"): nothing is sent, the helper is told it needs 1.9
+    cmd('viewer', 'test-view-oldclip on');
+    const h1 = T('host');
+    assert.equal(cmd('viewer', 'test-view-clipremote on'), 'That PC needs Hallow Assist 1.9');
+    await sleep(600); { const h = T('host'); assert.equal(h.clipRemoteAccepted + h.clipRemoteRefused, h1.clipRemoteAccepted + h1.clipRemoteRefused, 'nothing sent to an older PC'); assert.equal(h.clipboard, false); }
+    assert.equal(T('viewer').clipRemoteLast, 'old');
+    cmd('viewer', 'test-view-oldclip off');
+    cmd('host', 'disconnect');
+    await until(() => T('viewer').viewer === 'Ended', 5000, 'viewer disconnected');
+    await until(() => T('host').host === 'Waiting', 8000, 'unattended keeps waiting');
+  } finally { cmd('host', 'test-clip-remote on'); cmd('host', 'test-unattended-off'); if (cfBefore) fs.writeFileSync(cfFile, cfBefore); else fs.rmSync(cfFile, { force: true }); }
+  await until(() => status('host').unattended === false, 5000, 'unattended off');
+  // attended: only the person at the PC can turn it on
+  const { code, password } = await newHostSession();
+  await connectViewer(code, password);
+  await until(() => T('host').consentPending, 10000, 'consent asked'); cmd('host', 'test-consent allow control');
+  await until(() => T('viewer').frames > 0, 10000, 'attended frames');
+  assert.equal(T('viewer').clipboardAllowed, false); assert.equal(T('viewer').hostClipRemote, true);
+  assert.equal(cmd('viewer', 'test-view-clipremote on'), 'ok');
+  await until(() => T('viewer').clipRemoteLast === 'attended', 5000, 'attended: refused');
+  { const h = T('host'); assert.equal(h.clipboard, false); assert.equal(h.clipboardBy, null); assert.equal(h.clipRemoteRefused, 1); }
+  assert.ok(T('host').log.some(l => l.includes('would like you to share your clipboard')), 'the person is told the helper asked');
+  assert.ok(T('viewer').log.some(l => l.includes('Only the person at that PC can turn on clipboard sharing')));
+  cmd('viewer', 'test-view-end'); await until(() => T('host').host === 'Ended', 5000, 'ended');
+});
+
 // ---- headless Edge: the real browser viewer page against the Windows host
 async function cdp(port) {
   const list = await until(async () => { try { return await (await fetch(`http://127.0.0.1:${port}/json/list`)).json(); } catch { return null; } }, 15000, 'edge devtools');

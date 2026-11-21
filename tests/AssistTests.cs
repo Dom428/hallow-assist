@@ -24,7 +24,7 @@ namespace HallowAssist.Tests
             if (args.Length >= 3 && args[0] == "--pwkey") { Console.WriteLine(Hex(Kdf.PasswordKey(args[1], args[2]))); return 0; }
             if (args.Contains("--wasapi-smoke")) return WasapiSmoke();
             if (args.Contains("--waveout-smoke")) return WaveOutSmoke();
-            try { Crypto(); Channels(); Tiles(); Inputs(); Protocol(); Misc(); V14(); V15(); V16(); V17(); }
+            try { Crypto(); Channels(); Tiles(); Inputs(); Protocol(); Misc(); V14(); V15(); V16(); V17(); V19(); }
             catch (Exception e) { fail++; Console.WriteLine("FAIL exception: " + e); }
             Console.WriteLine(pass + " passed, " + fail + " failed");
             return fail == 0 ? 0 : 1;

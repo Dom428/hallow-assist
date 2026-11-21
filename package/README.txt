@@ -30,10 +30,19 @@ UNATTENDED ACCESS (your own PCs only)
 - Sound isn't shared in unattended sessions unless you turn that on in Settings.
 - Copied files are shared in unattended sessions without a question (and noted in Connection
   history) unless you turn on "Ask before my own PCs share files in unattended sessions".
+- In unattended sessions your helper app can turn clipboard sharing on (the red bar says so) unless
+  you turn off "Let my own PCs' clipboard be turned on remotely".
 
 PRIVACY
 - End-to-end encrypted: your relay passes sealed messages along and can't see screens,
   keys, chat or files. Crash reports stay on this PC. Nothing else is sent anywhere.
+
+WHAT'S NEW IN 1.9
+- Your own PCs (unattended sessions): the helper can turn clipboard sharing on and off from the
+  viewer ("Their clipboard"), so copied text and "Copy their files here" work with nobody there. The
+  red bar says "Clipboard shared (turned on by <helper>)". Sessions started with Get help are
+  unchanged: only the person at the PC turns it on. Settings > "Let my own PCs' clipboard be turned
+  on remotely" (on by default). A PC with 1.8 or earlier: "That PC needs Hallow Assist 1.9".
 
 WHAT'S NEW IN 1.8
 - New app icon: a hand holding a heart, in the Hallow family style (the relay's web page too).

@@ -27,6 +27,8 @@ end-to-end encrypted.
 
 - No files leave the PC of the person being helped without their click: the helper's **Copy their files here** waits for
   their **Allow** (1.6). Only your own PCs in an unattended session share them without a question, and say so (1.7).
+- Only the person at the PC turns on clipboard sharing - except on your own PCs in an unattended session, where your helper app
+  can turn it on and the red bar says who did (1.9; a setting on each PC, on by default).
 - No stealth mode, no hidden install, no starting a session by itself - ever. Every session starts with the person
   clicking Get help, and the bar is always visible while someone is connected.
 - **Unattended access** (connect without anyone clicking Allow) is only for **your own PCs**: off by default; turning it on
@@ -55,6 +57,14 @@ end-to-end encrypted.
 
 ## What's new
 
+- **1.9** - **Turn on clipboard sharing on your own PCs from the helper's side**: in an **unattended** session (one of
+  your own PCs, connected with its unattended password) clipboard sharing starts off, and only the person at the PC could
+  turn it on - so with nobody there, copied text and **Copy their files here** couldn't be used. Now the viewer has a
+  **Their clipboard** toggle for unattended sessions: it sends a sealed request, and that PC turns clipboard sharing on or
+  off. Its red bar says *Clipboard shared (turned on by Dom)*. Sessions where someone clicked **Get help** are unchanged:
+  the request is refused and only the person at the PC can turn it on (they're told you asked). On each of your PCs,
+  **Settings > Let my own PCs' clipboard be turned on remotely** (on by default, next to the 1.7 setting) can switch it
+  off. A PC with 1.8 or earlier doesn't know the request: the viewer says *That PC needs Hallow Assist 1.9*.
 - **1.8** - **New app icon**: a hand holding a heart, in the Hallow family style - the app and the relay's web page
   (redeploy the relay to see it there). Nothing else changed.
 - **1.7** - **Your own PCs share their copied files without a question**: in an **unattended** session (one of your own
