@@ -476,7 +476,8 @@ await step('Wake-on-LAN (v1.4): one of Your PCs tells its owner its network adap
     assert.equal(pk.length, 102); assert.ok(pk.subarray(0, 6).every(b => b === 0xff));
     for (let i = 0; i < 16; i++) assert.ok(pk.subarray(6 + i * 6, 12 + i * 6).equals(mac), 'repeat ' + i);
     await until(() => T('viewer').wake === 'online', 10000, 'waits for the online dot');
-    cmd('viewer', 'test-view-end');
+    cmd('host', 'disconnect');
+    await until(() => T('viewer').viewer === 'Ended', 5000, 'viewer disconnected');
     await until(() => T('host').host === 'Waiting', 8000, 'unattended keeps waiting');
   } finally { cmd('host', 'test-unattended-off'); }
   await until(() => status('host').unattended === false, 5000, 'unattended off');
