@@ -26,6 +26,7 @@ namespace HallowAssist
         public bool SoundUnattended;      // v1.4: unattended sessions start with Share sound on (a setting, off by default)
         public ScreenSource Screen; public IInputSink Input; public IClip Clip; public string DownloadDir;
         public IFileClip FileClip;        // v1.5: copied files (only while clipboard sharing is on)
+        public bool AskOwnFiles;          // v1.7: unattended sessions ask before copied files leave too (a setting, off by default)
     }
 
     public class HostSession
@@ -57,6 +58,8 @@ namespace HallowAssist
         public event Action<string> Detail;                       // v1.4: connection details (the log), not shown on the bar or the main window
         public event Action<string, string, Action<bool>> FilesAskNeeded;   // v1.6: title, text, answer(allow) - the helper wants this PC's copied files
         public event Action FilesAskClosed;                                 // v1.6: the question went away (answered, timed out, session over)
+        public event Action<string[]> FilesCopied;                          // v1.7: names - copied files left this PC in an unattended session (for the history and the bar)
+        public bool AskOwnFiles { get { return o.AskOwnFiles; } set { o.AskOwnFiles = value; } }   // v1.7: the setting (also mid-session)
         void Tell(string s) { var h = Detail; if (h != null) try { h(s); } catch { } }
 
         public HostSession(HostOptions opts)
@@ -366,7 +369,7 @@ namespace HallowAssist
         // ---- v1.6: the helper's "Copy their files here" - nothing leaves this PC before its person clicks Allow
         int pullId; volatile bool pullPending; bool pullOld;
         public bool PullPending { get { return pullPending; } }
-        public int PullsAsked, PullsAllowed;   // tests
+        public int PullsAsked, PullsAllowed, PullsAuto;   // tests (PullsAuto, v1.7: allowed by itself in an unattended session)
         void PullReply(bool allowed, string reason, string text, bool old)
         {
             SendJson("t", "clip-files-answer", "allowed", allowed, "reason", reason, "text", text);
@@ -383,17 +386,20 @@ namespace HallowAssist
             int id, cid;
             lock (gate) { id = ++pullId; cid = consentId; pullPending = true; pullOld = old; PullsAsked++; }
             var helper = HelperName ?? "Your helper";
+            // v1.7: one of your own PCs (an unattended session - connected with the unattended password) allows it by itself,
+            // unless "Ask before my own PCs share files in unattended sessions" is on. The copy goes into the connection history.
+            if (o.Unattended && !o.AskOwnFiles) { lock (gate) PullsAuto++; PullAnswered(id, cid, ask, PullResult.Allow, old, false); return; }
             Say(helper + " wants to copy " + (ask.Names.Length == 1 ? "a file" : ask.Names.Length + " files") + " you copied - nothing is sent unless you click Allow.");
-            var answer = FilePull.Once(r => PullAnswered(id, cid, ask, r, old), FilePull.TimeoutMs);
+            var answer = FilePull.Once(r => PullAnswered(id, cid, ask, r, old, true), FilePull.TimeoutMs);
             var h = FilesAskNeeded;
             if (h == null) answer(PullResult.Deny);
             else try { h(FilePull.Title(helper, ask.Names.Length), FilePull.Text(ask), ok => answer(ok ? PullResult.Allow : PullResult.Deny)); } catch { answer(PullResult.Deny); }
             Fire();
         }
-        void PullAnswered(int id, int cid, PullAsk ask, PullResult r, bool old)
+        void PullAnswered(int id, int cid, PullAsk ask, PullResult r, bool old, bool asked)
         {
             lock (gate) { if (id != pullId || !pullPending) return; pullPending = false; }
-            var closed = FilesAskClosed; if (closed != null) try { closed(); } catch { }
+            if (asked) { var closed = FilesAskClosed; if (closed != null) try { closed(); } catch { } }
             if (State != HostState.Connected || consentId != cid) return;
             if (r != PullResult.Allow)
             {
@@ -402,11 +408,12 @@ namespace HallowAssist
                 Fire(); return;
             }
             if (!Clipboard || o.FileClip == null) { PullReply(false, "cancelled", "They turned off clipboard sharing, so nothing was sent.", old); Fire(); return; }
-            PullReply(true, "allow", null, old);
+            PullReply(true, asked ? "allow" : "auto", null, old);
             var err = Files.OfferMany(ask.Paths, true);   // exactly the files that were shown
             if (err != null) { PullReply(false, "error", "Their copied files can't be sent: " + err, old); Say("Your files couldn't be sent: " + err); Fire(); return; }
             PullsAllowed++;
-            Say("You allowed it - offering " + FilePull.List(ask) + " to " + (HelperName ?? "your helper") + ".");
+            Say(asked ? "You allowed it - offering " + FilePull.List(ask) + " to " + (HelperName ?? "your helper") + "." : OwnFiles.BarText(HelperName) + ": " + FilePull.List(ask) + " (unattended session - see Connection history).");
+            var fc = FilesCopied; if (fc != null && o.Unattended) try { fc(ask.Names); } catch { }   // v1.7: into this PC's connection history
             Fire();
         }
         // a question that's still open goes away (as Deny); true if there was one

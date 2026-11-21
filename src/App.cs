@@ -19,14 +19,14 @@ using WF = System.Windows.Forms;
 [assembly: AssemblyTitle("Hallow Assist")]
 [assembly: AssemblyProduct("Hallow Assist")]
 [assembly: AssemblyDescription("Remote help for friends and family")]
-[assembly: AssemblyVersion("1.6.0.0")]
-[assembly: AssemblyFileVersion("1.6.0.0")]
+[assembly: AssemblyVersion("1.7.0.0")]
+[assembly: AssemblyFileVersion("1.7.0.0")]
 
 namespace HallowAssist
 {
     public static class Program
     {
-        public const string Version = "1.6";
+        public const string Version = "1.7";
         [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr v);
 
         [STAThread]
@@ -113,6 +113,10 @@ namespace HallowAssist
                 new HistoryEntry { Start = now.AddDays(-1).AddHours(-3).ToString("o"), End = now.AddDays(-1).AddHours(-3).AddMinutes(6).ToString("o"), Helper = "Dom", Client = "browser", Unattended = true, ControlAllowed = true, InputUsed = true },
                 new HistoryEntry { Start = now.AddDays(-9).ToString("o"), End = now.AddDays(-9).AddMinutes(3).ToString("o"), Helper = "Sam", Client = "browser", ControlAllowed = false } };
             Snap.Save(new HistoryWindow(hist, () => { }), Path.Combine(dir, "history.png"), 620, 0);
+            // v1.7: an unattended session copied files without a question - the history line and the red bar
+            hist[1].Copies = new List<CopyNote> { OwnFiles.Note(new[] { "invoice.pdf", "photos.zip", "setup-notes.txt" }, now.AddDays(-1).AddHours(-3).AddMinutes(2)) };
+            Snap.Save(new HistoryWindow(hist, () => { }), Path.Combine(dir, "history-copied.png"), 620, 0);
+            { var bar7 = new HelpBar(); bar7.Update("Dom", true, true, true, "4827", true); bar7.Flash(OwnFiles.BarText("Dom"), OwnFiles.FlashSeconds); Snap.Save(bar7, Path.Combine(dir, "bar-files-copied.png"), 1180, 0); }
             var ud = new UnattendedDialog(); ud.SnapFill("Use at least 12 characters."); Snap.Save(ud, Path.Combine(dir, "unattended.png"), 480, 0);
             var chat = new ChatWindow("Dom"); chat.Add("Them", "Can you see the printer settings?", false); chat.Add("You", "Yes - click Devices on the left.", true); Snap.Save(chat, Path.Combine(dir, "chat.png"), 380, 420);
             Snap.Save(CrashNotice.Make(Path.Combine(dir, "example.txt")), Path.Combine(dir, "crash.png"), 440, 0);
@@ -224,6 +228,7 @@ namespace HallowAssist
             o.Audio = AssistSettings.Fake ? (IAudioSource)new ToneSource() : new LoopbackSource();   // v1.4: only used while Share sound is on
             o.SoundUnattended = S.SoundUnattended;
             o.FileClip = o.Clip as IFileClip; o.DownloadDir = S.ReceiveDir();   // v1.5
+            o.AskOwnFiles = S.AskOwnFiles;   // v1.7
             var h = new HostSession(o);
             host = h;
             h.Detail += t => ui.BeginInvoke(new Action(() => Log(t)));
@@ -255,6 +260,16 @@ namespace HallowAssist
                 fileAsk.Show(); fileAsk.Activate();
             }));
             h.FilesAskClosed += () => ui.BeginInvoke(new Action(() => { pendingFileAsk = null; if (fileAsk != null) { var w = fileAsk; fileAsk = null; w.Cancel(); } }));
+            // v1.7: an unattended session copied files from this PC without a question - into the connection history, and briefly on the red bar
+            h.FilesCopied += names => ui.BeginInvoke(new Action(() =>
+            {
+                Log("files copied (unattended): " + OwnFiles.Line(names));
+                if (h != host) return;
+                if (histEntry != null && histHost == h) { if (histEntry.Copies == null) histEntry.Copies = new List<CopyNote>(); histEntry.Copies.Add(OwnFiles.Note(names, DateTime.Now)); }
+                barFlash = OwnFiles.BarText(h.HelperName); barFlashUntil = DateTime.UtcNow.AddSeconds(OwnFiles.FlashSeconds);
+                if (bar != null) bar.Flash(barFlash, OwnFiles.FlashSeconds);
+                WriteStatus();
+            }));
             h.Ended += r => ui.BeginInvoke(new Action(() => HostEnded(h, r)));
             // v1.2: drawing, restart, files for the history
             h.Drawing += (m, id, pts) => ui.BeginInvoke(new Action(() =>
@@ -310,6 +325,8 @@ namespace HallowAssist
             WriteStatus();
         }
         bool barVisible;
+        string barFlash; DateTime barFlashUntil;   // v1.7: "Files copied by Dom" for a few seconds (the tests read it from the status)
+        public void SetAskOwnFiles(bool on) { S.AskOwnFiles = on; S.Save(); var h = host; if (h != null) h.AskOwnFiles = on; }   // v1.7
         void HideBar() { barVisible = false; if (bar != null) { bar.CloseForGood(); bar = null; } if (hostChat != null) { hostChat.ForceClose(); hostChat = null; } }
         void AskConsent(HostSession h, string name, string safety, Action<ConsentAnswer> answer)
         {
@@ -822,7 +839,8 @@ namespace HallowAssist
             t["keys"] = KeysNote; t["askingKeys"] = keysBusy;
             t["consentPending"] = pendingConsent != null; t["bar"] = barVisible; t["hotkey"] = hotkeyRegistered; t["panics"] = Panics; t["startsWithWindows"] = StartsWithWindows();
             lock (pendingFiles) t["filesPending"] = pendingFiles.Count;
-            t["fileAskPending"] = pendingFileAsk != null; if (h != null) { t["pullPending"] = h.PullPending; t["pullsAsked"] = h.PullsAsked; t["pullsAllowed"] = h.PullsAllowed; t["hostFileOffers"] = h.Files.OffersSent; t["hostFileBytes"] = h.Files.BytesSent; }   // v1.6
+            t["fileAskPending"] = pendingFileAsk != null; if (h != null) { t["pullPending"] = h.PullPending; t["pullsAsked"] = h.PullsAsked; t["pullsAllowed"] = h.PullsAllowed; t["hostFileOffers"] = h.Files.OffersSent; t["hostFileBytes"] = h.Files.BytesSent; t["pullsAuto"] = h.PullsAuto; }   // v1.6
+            t["barFlash"] = barFlash != null && DateTime.UtcNow < barFlashUntil ? barFlash : null; t["askOwnFiles"] = S.AskOwnFiles;   // v1.7
             var v = Viewer;
             if (v != null) { t["viewer"] = v.State.ToString(); t["viewerSafety"] = v.Safety; t["frames"] = v.Frames; t["controlAllowed"] = v.ControlAllowed; t["clipboardAllowed"] = v.ClipboardAllowed; t["banner"] = v.Banner; t["viewerEnd"] = v.EndReason; t["monitors"] = v.Monitors.Length; t["monitor"] = v.Monitor; t["lastClip"] = v.LastClipFromThem; t["screenW"] = v.Screen.W; t["screenH"] = v.Screen.H; t["viewerDirect"] = v.Direct;
                 t["viewerSound"] = v.SoundOn; t["hostSharesSound"] = v.HostSharesSound; t["audioPackets"] = v.AudioPackets; t["hostMac"] = v.HostMac; t["pathNote"] = v.PathNote;
@@ -931,6 +949,7 @@ namespace HallowAssist
                 case "test-view-sendcopied": return Viewer.SendCopiedFiles() ?? "ok";
                 case "test-view-getcopied": { var r = Viewer.GetCopiedFiles(); return r == FilePull.WaitingText && Viewer.PullWaiting ? "ok" : "error " + r; }
                 case "test-files-ask": { var f = pendingFileAsk; if (f == null) return "error nothing to answer"; pendingFileAsk = null; f(a.Length > 0 && a[0] == "allow"); return "ok"; }   // v1.6: Allow / Deny on the PC
+                case "test-ask-own-files": SetAskOwnFiles(a.Length > 0 && a[0] == "on"); return "ok";   // v1.7: the Settings switch
                 case "test-view-oldhost": Viewer.HostAsksFiles = !(a.Length > 0 && a[0] == "on"); return "ok";   // v1.6: act as if their PC were 1.5 (no "askFiles")
                 case "test-host-sendcopied": if (host == null) return "error no session"; return host.SendCopiedFiles() ?? "ok";
                 case "test-view-rec": if (a.Length > 0 && a[0] == "on") return Viewer.StartRecording() ?? "ok"; Viewer.StopRecording("You stopped recording.", true); return "ok";

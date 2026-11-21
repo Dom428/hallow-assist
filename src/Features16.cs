@@ -56,6 +56,7 @@ namespace HallowAssist
         // the helper's line for an answer from the PC
         public static string AnswerText(bool allowed, string reason, string text)
         {
+            if (allowed && reason == "auto") return "Your own PC sent them by itself (unattended session) - you're asked before anything is saved.";   // v1.7
             if (allowed) return "They allowed it - their files are on the way (you're asked before anything is saved).";
             if (!string.IsNullOrEmpty(text)) return text;
             return reason == "timeout" ? "They said no - they didn't answer within a minute, so nothing was sent." : "They said no.";

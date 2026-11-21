@@ -26,7 +26,7 @@ end-to-end encrypted.
 ## What it won't do (on purpose)
 
 - No files leave the PC of the person being helped without their click: the helper's **Copy their files here** waits for
-  their **Allow** (1.6).
+  their **Allow** (1.6). Only your own PCs in an unattended session share them without a question, and say so (1.7).
 - No stealth mode, no hidden install, no starting a session by itself - ever. Every session starts with the person
   clicking Get help, and the bar is always visible while someone is connected.
 - **Unattended access** (connect without anyone clicking Allow) is only for **your own PCs**: off by default; turning it on
@@ -55,6 +55,13 @@ end-to-end encrypted.
 
 ## What's new
 
+- **1.7** - **Your own PCs share their copied files without a question**: in an **unattended** session (one of your own
+  PCs, connected with its unattended password) **Copy their files here** no longer waits for an Allow that nobody is
+  there to click. The PC sends exactly the copied files by itself (your side still asks before saving them), writes
+  *"copied 3 files from this PC: invoice.pdf, photos.zip, setup-notes.txt"* with the time into that PC's **Connection
+  history**, and its red bar briefly says *Files copied by Dom*. Clipboard sharing still has to be on there. Sessions
+  where someone clicked **Get help** ask exactly as in 1.6. To keep the question on your own PCs too, turn on
+  **Settings > Ask before my own PCs share files in unattended sessions** on that PC (off by default).
 - **1.6** - **Their copied files only leave their PC when they say so**: in 1.5, the helper's **Copy their files here**
   sent the files copied on the other PC with only a note there. Now that PC first asks its person: *"Dom wants to copy
   these 3 files from your PC: invoice.pdf, photos.zip, setup-notes.txt (18.0 MB in all)"* with **Allow** / **Deny** -

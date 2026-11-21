@@ -434,6 +434,66 @@ await step('unattended access (opt-in): fixed code from the secret, no question 
   await until(() => status('host').unattended === false && status('host').test.startsWithWindows === false, 5000, 'unattended off');
 });
 
+await step('copied files (v1.7): an unattended session (your own PC) copies without a question and notes it in the connection history; the bar says "Files copied by"; the Settings switch brings the question back', async () => {
+  const r = okJson(cmd('host', 'test-unattended-on Correct-Horse-42!'));
+  const histFile = path.join(dirs.host, 'history.json');
+  const src = path.join(WORK, 'copied17'); fs.rmSync(src, { recursive: true, force: true }); fs.mkdirSync(src, { recursive: true });
+  const a = path.join(src, 'own-pc-budget.txt'), b = path.join(src, 'own-pc-photo.bin');
+  fs.writeFileSync(a, 'OWN-PC-FILE'); fs.writeFileSync(b, Buffer.from(Array.from({ length: 40000 }, (_, i) => (i * 3) % 256)));
+  fs.writeFileSync(path.join(dirs.host, 'clipboard-files.txt'), [a, b].join('\r\n'));
+  const da = path.join(dirs.viewer, 'Downloads', 'own-pc-budget.txt'), db = path.join(dirs.viewer, 'Downloads', 'own-pc-photo.bin');
+  for (const f of [da, db]) fs.rmSync(f, { force: true });
+  try {
+    assert.equal(T('host').askOwnFiles, false, 'the setting is off by default');
+    await until(() => T('host').host === 'Waiting' && T('host').unattendedHost, 10000, 'unattended waiting');
+    await connectViewer(r.code, 'Correct-Horse-42!', 'Me');
+    await until(() => T('viewer').frames > 0, 10000, 'unattended frames');
+    cmd('host', 'test-clipboard on'); await until(() => T('viewer').clipboardAllowed === true, 5000, 'clipboard sharing on');
+    const v0 = T('viewer').filesPending, h0 = T('host');
+    // no question on the PC: offered right away, the helper's side still asks before saving
+    assert.equal(cmd('viewer', 'test-view-getcopied'), 'ok');
+    await until(() => T('viewer').filesPending === v0 + 1, 5000, 'the question on the helper (no question on the PC)');
+    { const h = T('host'); assert.equal(h.fileAskPending, false, 'no question on the PC'); assert.equal(h.pullsAuto, h0.pullsAuto + 1); assert.equal(h.hostFileOffers, h0.hostFileOffers + 1); assert.equal(h.barFlash, 'Files copied by Me', 'the red bar says Files copied by'); }
+    assert.equal(T('viewer').pullLast, 'auto');
+    assert.ok(T('viewer').log.some(l => l.includes('Your own PC sent them by itself')), 'the helper is told');
+    assert.ok(T('host').log.some(l => l.includes('files copied (unattended): copied 2 files from this PC: own-pc-budget.txt, own-pc-photo.bin')));
+    cmd('viewer', 'test-file-answer accept');
+    await until(() => fs.existsSync(da) && fs.existsSync(db) && fs.statSync(db).size === 40000, 10000, 'both files on the helper');
+    assert.equal(fs.readFileSync(da, 'utf8'), 'OWN-PC-FILE');
+    // the Settings switch on: asks like 1.6 (also in the session that's connected now)
+    assert.equal(cmd('host', 'test-ask-own-files on'), 'ok'); assert.equal(T('host').askOwnFiles, true);
+    assert.ok(fs.readFileSync(path.join(dirs.host, 'settings.json'), 'utf8').includes('"AskOwnFiles":true'), 'the setting is saved');
+    const h1 = T('host');
+    assert.equal(cmd('viewer', 'test-view-getcopied'), 'ok');
+    await until(() => T('host').fileAskPending, 5000, 'the question on the PC again');
+    await sleep(600); assert.equal(T('host').hostFileOffers, h1.hostFileOffers, 'nothing offered before Allow');
+    assert.equal(cmd('host', 'test-files-ask deny'), 'ok');
+    await until(() => T('viewer').pullLast === 'deny', 5000, 'They said no');
+    await sleep(400); { const h = T('host'); assert.equal(h.hostFileOffers, h1.hostFileOffers); assert.equal(h.pullsAuto, h1.pullsAuto); }
+    assert.equal(cmd('host', 'test-ask-own-files off'), 'ok');
+    // the session ends: the copy is in this PC's connection history, with the time
+    cmd('host', 'disconnect');
+    await until(() => T('viewer').viewer === 'Ended', 5000, 'viewer disconnected');
+    await until(() => T('host').host === 'Waiting', 8000, 'unattended keeps waiting');
+    const hist = await until(() => { if (!fs.existsSync(histFile)) return null; const all = JSON.parse(fs.readFileSync(histFile, 'utf8').replace(/^\uFEFF/, '')); return all.length && all[0].Helper === 'Me' && all[0].Copies ? all : null; }, 5000, 'the history entry');
+    assert.equal(hist[0].Unattended, true); assert.equal(hist[0].Copies.length, 1, 'one copy (the denied one is not a copy)');
+    assert.deepEqual(hist[0].Copies[0].Names, ['own-pc-budget.txt', 'own-pc-photo.bin']);
+    assert.ok(Math.abs(Date.now() - Date.parse(hist[0].Copies[0].At)) < 120000, 'with the time');
+  } finally { cmd('host', 'test-ask-own-files off'); cmd('host', 'test-clipboard off'); cmd('host', 'test-unattended-off'); }
+  await until(() => status('host').unattended === false, 5000, 'unattended off');
+  // attended sessions still ask (as in 1.6) with the setting off
+  const { code, password } = await newHostSession();
+  await connectViewer(code, password);
+  await until(() => T('host').consentPending, 10000, 'consent asked'); cmd('host', 'test-consent allow clipboard');
+  await until(() => T('viewer').frames > 0 && T('viewer').clipboardAllowed === true, 10000, 'attended, clipboard shared');
+  const h2 = T('host');
+  assert.equal(cmd('viewer', 'test-view-getcopied'), 'ok');
+  await until(() => T('host').fileAskPending, 5000, 'attended: the question on the PC');
+  await sleep(500); assert.equal(T('host').hostFileOffers, h2.hostFileOffers, 'attended: nothing offered before Allow'); assert.equal(T('host').pullsAuto, 0);
+  cmd('host', 'test-files-ask deny'); await until(() => T('viewer').pullLast === 'deny', 5000, 'attended: They said no');
+  cmd('viewer', 'test-view-end'); await until(() => T('host').host === 'Ended', 5000, 'ended');
+});
+
 // ---- headless Edge: the real browser viewer page against the Windows host
 async function cdp(port) {
   const list = await until(async () => { try { return await (await fetch(`http://127.0.0.1:${port}/json/list`)).json(); } catch { return null; } }, 15000, 'edge devtools');

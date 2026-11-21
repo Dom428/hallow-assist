@@ -69,6 +69,7 @@ namespace HallowAssist
         readonly TextBlock text, sub; readonly Button controlBtn, clipBtn, soundBtn, copiedBtn, recBtn; readonly Border recTag;
         public Action Disconnect, ToggleControl, ToggleClipboard, OpenChat, SendFile, ToggleSound, SendCopied, StopRecording;
         bool allowClose; DispatcherTimer topTimer;
+        string flash; DispatcherTimer flashTimer; string[] lines;   // v1.7: a short message in place of the first line ("Files copied by Dom")
         public HelpBar()
         {
             Ui.Dress(this, "Hallow Assist - someone can see your screen", 0);
@@ -125,12 +126,23 @@ namespace HallowAssist
             recTag.Visibility = recBtn.Visibility = recording ? Visibility.Visible : Visibility.Collapsed;
             copiedBtn.Visibility = clipboard ? Visibility.Visible : Visibility.Collapsed;
             Title = recording ? "Hallow Assist - RECORDING - someone can see your screen" : "Hallow Assist - someone can see your screen";
-            text.Text = l[0]; sub.Text = l[1];
+            lines = l; ShowLines();
             controlBtn.Content = control ? "Stop control" : "Allow control";
             clipBtn.Content = clipboard ? "Stop clipboard" : "Share clipboard";
             soundBtn.Content = sound ? "Stop sound" : "Share sound"; soundBtn.Visibility = soundAvailable ? Visibility.Visible : Visibility.Collapsed;
         }
-        public void CloseForGood() { allowClose = true; if (topTimer != null) topTimer.Stop(); Close(); }
+        void ShowLines() { if (lines == null) return; text.Text = flash ?? lines[0]; if (flash != null) text.Foreground = Ui.Amber; else text.ClearValue(TextBlock.ForegroundProperty); sub.Text = lines[1]; }
+        // v1.7: shows a message on the bar for a few seconds, then the usual line again
+        public void Flash(string message, int seconds)
+        {
+            flash = message; ShowLines();
+            if (flashTimer != null) flashTimer.Stop();
+            if (Snap.On) return;
+            flashTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(seconds) };
+            flashTimer.Tick += (s, e) => { flashTimer.Stop(); flash = null; ShowLines(); };
+            flashTimer.Start();
+        }
+        public void CloseForGood() { allowClose = true; if (topTimer != null) topTimer.Stop(); if (flashTimer != null) flashTimer.Stop(); Close(); }
     }
 
     // "X wants to send you a file" (both sides)

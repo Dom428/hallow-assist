@@ -55,6 +55,7 @@ namespace HallowAssist
         [DataMember] public bool DirectOff;      // v1.3: never connect directly (always through the relay)
         [DataMember] public bool SoundUnattended;   // v1.4: unattended sessions start with Share sound on (off by default)
         [DataMember] public string ReceiveFolder;   // v1.5: where received files go (empty = Downloads\Hallow Assist)
+        [DataMember] public bool AskOwnFiles;       // v1.7: unattended sessions ask before copied files leave this PC (off by default: they're allowed and logged)
 
         public static AssistSettings Load()
         {

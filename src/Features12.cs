@@ -56,6 +56,7 @@ namespace HallowAssist
         [DataMember] public bool Unattended, ControlAllowed, InputUsed;
         [DataMember] public int FilesReceived;
         [DataMember] public bool Recorded;   // v1.5: the helper recorded it (the red bar said so)
+        [DataMember] public List<CopyNote> Copies;   // v1.7: copied files that left this PC in an unattended session (no question asked)
     }
     public static class History
     {
@@ -102,7 +103,8 @@ namespace HallowAssist
             var len = end <= s ? "still connected" : mins < 1 ? "under a minute" : mins < 60 ? mins + " min" : (mins / 60) + " h " + (mins % 60) + " min";
             return day + " " + s.ToString("HH:mm") + "  -  " + (e.Helper ?? "Someone") + (e.Client == "browser" ? " (browser)" : "") + "  -  " + len +
                 (e.InputUsed ? "  -  used your mouse and keyboard" : e.ControlAllowed ? "  -  could use your mouse and keyboard" : "  -  view only") +
-                (e.FilesReceived > 0 ? "  -  " + e.FilesReceived + (e.FilesReceived == 1 ? " file" : " files") + " received" : "") + (e.Unattended ? "  -  unattended" : "") + (e.Recorded ? "  -  recorded by the helper" : "");
+                (e.FilesReceived > 0 ? "  -  " + e.FilesReceived + (e.FilesReceived == 1 ? " file" : " files") + " received" : "") + (e.Unattended ? "  -  unattended" : "") + (e.Recorded ? "  -  recorded by the helper" : "") +
+                (e.Copies != null && e.Copies.Count > 0 ? string.Concat(e.Copies.Where(c => c != null).Select(c => "  -  " + OwnFiles.Describe(c))) : "");   // v1.7
         }
     }
 

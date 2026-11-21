@@ -49,12 +49,13 @@ namespace HallowAssist.Tests
             }
             public int Offers { get { lock (Sent) return Sent.Count(s => s == "file-batch" || s == "file-offer"); } }
         }
-        static HostRig NewHost(string dir, string[] copied)
+        static HostRig NewHost(string dir, string[] copied, HostOptions opts = null)   // v1.7: opts (e.g. Unattended)
         {
             Directory.CreateDirectory(dir);
             var clip = Path.Combine(dir, "clipboard.txt"); File.WriteAllLines(Path.Combine(dir, "clipboard-files.txt"), copied);
             var r = new HostRig();
-            r.H = new HostSession(new HostOptions { Screen = new SyntheticSource(), FileClip = new FileClip(clip) }) { State = HostState.Connected, HelperName = "Dom" };
+            opts = opts ?? new HostOptions(); opts.Screen = new SyntheticSource(); opts.FileClip = new FileClip(clip);
+            r.H = new HostSession(opts) { State = HostState.Connected, HelperName = "Dom" };
             r.H.Clipboard = true;
             var tr = new Transfers(m =>
             {

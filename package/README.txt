@@ -28,10 +28,19 @@ UNATTENDED ACCESS (your own PCs only)
 - Off by default. Settings > Unattended access needs its own strong password and
   Start with Windows. The red bar still shows while you're connected.
 - Sound isn't shared in unattended sessions unless you turn that on in Settings.
+- Copied files are shared in unattended sessions without a question (and noted in Connection
+  history) unless you turn on "Ask before my own PCs share files in unattended sessions".
 
 PRIVACY
 - End-to-end encrypted: your relay passes sealed messages along and can't see screens,
   keys, chat or files. Crash reports stay on this PC. Nothing else is sent anywhere.
+
+WHAT'S NEW IN 1.7
+- Your own PCs (unattended sessions) share their copied files without a question: "Copy their files
+  here" sends them right away (you're still asked before saving), the PC's Connection history says
+  "copied N files from this PC: <names>" with the time, and its red bar briefly says "Files copied by
+  <helper>". Sessions started with Get help still ask, as in 1.6. To keep the question on your own
+  PCs, turn on Settings > "Ask before my own PCs share files in unattended sessions" (off by default).
 
 WHAT'S NEW IN 1.6
 - "Copy their files here" now asks the person being helped first: their PC shows which files and how

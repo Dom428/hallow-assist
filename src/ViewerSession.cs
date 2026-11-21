@@ -221,7 +221,7 @@ namespace HallowAssist
                     {
                         if (!PullWaiting) break;
                         PullWaiting = false; var allowed = Msg.Bool(m, "allowed");
-                        PullLast = allowed ? "allowed" : Msg.Str(m, "reason") ?? "deny";
+                        PullLast = allowed ? (Msg.Str(m, "reason") == "auto" ? "auto" : "allowed") : Msg.Str(m, "reason") ?? "deny";   // v1.7: "auto" = an unattended PC allowed it by itself
                         Say(FilePull.AnswerText(allowed, Msg.Str(m, "reason"), Msg.Str(m, "text")));
                         Fire(); break;
                     }
