@@ -57,6 +57,12 @@ end-to-end encrypted.
 
 ## What's new
 
+- **1.10** - **Your PCs on your phone**: Hallow Remote and Hallow Hub can show which of **Your PCs** are online. Hallow
+  Assist's `status.json` (and its `status` pipe reply) now lists each saved PC's **name** and **online state** - waiting
+  for you, busy, offline or unknown - with when it was checked. Never a code, password, key, network adapter or address.
+  The online dots used to be checked only while the window was open; now they're also checked every 2 minutes while
+  Hallow Assist runs in the tray with a relay set. A new pipe command, `connect <name>`, opens the window with that PC
+  selected (outlined, its code filled in) - it never starts a session: you still click **Connect**.
 - **1.9** - **Turn on clipboard sharing on your own PCs from the helper's side**: in an **unattended** session (one of
   your own PCs, connected with its unattended password) clipboard sharing starts off, and only the person at the PC could
   turn it on - so with nobody there, copied text and **Copy their files here** couldn't be used. Now the viewer has a
@@ -154,10 +160,13 @@ end-to-end encrypted.
 
 ## Hallow family
 
-Named pipe `HallowFamily.Assist.<user>` (`ping`, `status`, `open`, `menu`, `invoke`, `quit`, `disconnect` - there's no
-command that starts a session), `HallowAssist.exe --cmd "<line>"`, `%APPDATA%\HallowAssist\status.json` (never a code or
-password), the one Hallow icon (Hallow Hub hosts the tray menu), the Hallow accent from Hallow Toolkit, crash reports kept on
-this PC, and updates from GitHub releases (asks first, checks the SHA-256).
+Named pipe `HallowFamily.Assist.<user>` (`ping`, `status`, `open`, `menu`, `invoke`, `quit`, `disconnect`, and since 1.10
+`connect <name>`, which only opens the window with that one of Your PCs selected - there's no command that starts a
+session), `HallowAssist.exe --cmd "<line>"`, `%APPDATA%\HallowAssist\status.json` (never a code or password; since 1.10
+`"pcs":[{"name":"Living room PC","online":"waiting","checked":"2026-11-21T09:30:05"}]` - each saved PC's name, its online
+state `waiting` / `busy` / `offline` / `unknown`, and when that was checked (local time, `null` = not yet; refreshed every
+2 minutes while Hallow Assist runs with a relay set)), the one Hallow icon (Hallow Hub hosts the tray menu), the Hallow
+accent from Hallow Toolkit, crash reports kept on this PC, and updates from GitHub releases (asks first, checks the SHA-256).
 
 ## Building
 

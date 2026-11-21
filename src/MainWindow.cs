@@ -231,10 +231,23 @@ namespace HallowAssist
                 var detail = Ui.Muted(Ui.FormatCode(p.Code) + (p.KeysItem != null ? "  -  from Hallow Keys: " + p.KeysItem : p.Key != null ? "  -  remembered" : "  -  type the password"), 11.5); detail.TextTrimming = TextTrimming.CharacterEllipsis; info.Children.Add(detail);
                 info.ToolTip = p.KeysItem != null ? "Password from Hallow Keys: " + p.KeysItem + " (you approve it in Keys each time; it's never stored here)." : p.Key != null ? "The password is remembered on this PC (as an encrypted key)." : "You type the password each time.";
                 row.Children.Add(info);
-                helpSomeone.Children.Add(row);
+                if (c.SelectedPc == p.Code)   // v1.10: picked from your phone ("connect <name>") - outlined until you connect
+                {
+                    row.Margin = new Thickness(0);
+                    helpSomeone.Children.Add(new Border { Child = row, BorderBrush = Ui.Accent, BorderThickness = new Thickness(1.5), CornerRadius = new CornerRadius(8), Padding = new Thickness(8, 5, 6, 5), Margin = new Thickness(-9, -2, -7, 6) });
+                }
+                else helpSomeone.Children.Add(row);
             }
             var sep = new Border { Height = 1, Background = Ui.R("Line"), Margin = new Thickness(0, 4, 0, 10) };
             helpSomeone.Children.Add(sep);
+        }
+        // v1.10 "connect <name>" (Hallow Remote / Hub): that PC outlined, its code in the box - Connect is still yours to click
+        public void SelectPc(SavedPc p)
+        {
+            RefreshHelpSomeone();
+            if (code == null || pw == null || helpStatus == null || !helpSomeone.Children.Contains(helpStatus)) return;
+            code.Text = Ui.FormatCode(p.Code); pw.Clear();
+            helpStatus.Text = PcShare.SelectedText(p); helpStatus.Foreground = Ui.R("Muted");
         }
         void AddPc()
         {

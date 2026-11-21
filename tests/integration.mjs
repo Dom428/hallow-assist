@@ -841,6 +841,43 @@ await step("session recording (v1.5): never starts when the notice can't be show
   assert.ok(T('viewer').log.some(l => l.includes('recording saved')));
 });
 
+await step('Your PCs for the phone (v1.10): status.json "pcs" has the name and online state only (waiting / busy / offline), refreshed while in the tray; "connect <name>" only selects the PC - no session starts', async () => {
+  const pc = name => (status('viewer').pcs || []).find(p => p.name === name);
+  const fresh = async (name, want, what) => until(() => { cmd('viewer', 'test-pcs-refresh'); const p = pc(name); return p && p.online === want; }, 15000, what);
+  const r = okJson(cmd('host', 'test-unattended-on Correct-Horse-42!'));
+  try {
+    await until(() => T('host').host === 'Waiting' && T('host').unattendedHost, 10000, 'unattended waiting');
+    assert.equal(cmd('viewer', 'test-savepc ' + r.code + ' Phone Test PC'), 'ok');
+    assert.equal(cmd('viewer', 'test-savepc 123456780 Never On'), 'ok');
+    await fresh('Phone Test PC', 'waiting', 'the unattended PC shows as waiting');
+    const s = status('viewer');
+    assert.equal(pc('Never On').online, 'offline');
+    assert.match(pc('Phone Test PC').checked, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d$/);
+    for (const p of s.pcs) assert.deepEqual(Object.keys(p), ['name', 'online', 'checked']);
+    const file = JSON.parse(fs.readFileSync(path.join(dirs.viewer, 'status.json'), 'utf8'));
+    assert.deepEqual(file.pcs.map(p => p.name).sort(), s.pcs.map(p => p.name).sort(), 'status.json has the same list as the pipe');
+    const shared = JSON.stringify(file.pcs) + JSON.stringify(Object.fromEntries(Object.entries(file).filter(([k]) => k !== 'test')));
+    for (const secret of [r.code, '123456780', 'Correct-Horse-42!', '02005E102030', '127.0.0.1']) assert.ok(!shared.includes(secret), 'not shared: ' + secret);
+    // connect <name>: only selects
+    assert.equal(cmd('viewer', 'connect  phone TEST pc '), 'ok');
+    assert.equal(T('viewer').selectedPc, r.code);
+    await sleep(1500);
+    assert.equal(status('viewer').helping, false, 'no session started'); assert.equal(T('host').host, 'Waiting', 'nobody connected to the PC');
+    assert.ok(T('viewer').log.some(l => l.includes('selected in the window')));
+    assert.match(cmd('viewer', 'connect Nobody'), /^error No PC called/);
+    assert.match(cmd('viewer', 'connect'), /^error No PC called/);
+    // busy while someone is connected
+    await connectViewer(r.code, 'Correct-Horse-42!', 'Me');
+    await until(() => T('viewer').frames > 0, 10000, 'unattended frames');
+    assert.equal(T('viewer').selectedPc, null, 'the selection goes once you connect');
+    assert.match(cmd('viewer', 'connect Phone Test PC'), /^error You're already connected/);
+    await fresh('Phone Test PC', 'busy', 'busy while connected');
+    cmd('host', 'disconnect'); await until(() => T('viewer').viewer === 'Ended', 5000, 'viewer disconnected');
+  } finally { cmd('host', 'test-unattended-off'); }
+  await until(() => status('host').unattended === false, 5000, 'unattended off');
+  await fresh('Phone Test PC', 'offline', 'offline once unattended access is off');
+});
+
 await step('closing the app (host) ends a connected session; the helper is told', async () => {
   sess = await newHostSession();
   await connectViewer(sess.code, sess.password); await until(() => T('host').consentPending, 10000, 'consent');

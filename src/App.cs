@@ -19,14 +19,14 @@ using WF = System.Windows.Forms;
 [assembly: AssemblyTitle("Hallow Assist")]
 [assembly: AssemblyProduct("Hallow Assist")]
 [assembly: AssemblyDescription("Remote help for friends and family")]
-[assembly: AssemblyVersion("1.9.0.0")]
-[assembly: AssemblyFileVersion("1.9.0.0")]
+[assembly: AssemblyVersion("1.10.0.0")]
+[assembly: AssemblyFileVersion("1.10.0.0")]
 
 namespace HallowAssist
 {
     public static class Program
     {
-        public const string Version = "1.9";
+        public const string Version = "1.10";
         [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr v);
 
         [STAThread]
@@ -107,6 +107,8 @@ namespace HallowAssist
             c.S.Pcs = AssistSettings.CleanPcs(new System.Collections.Generic.List<SavedPc> { new SavedPc { Name = "Living room PC", Code = "715390246", Key = "x", LastUsed = DateTime.Now.ToString("o") }, new SavedPc { Name = "Mum's laptop", Code = "302118457" }, new SavedPc { Name = "Office PC", Code = "560913284", Mac = "3C7C3F1A2B4D", KeysItem = "Office PC (Assist)" } });
             c.PcStatus = new Dictionary<string, string> { { "715390246", "online" }, { "302118457", "offline" }, { "560913284", "offline" } };
             main.Build(); Snap.Save(main, Path.Combine(dir, "main-yourpcs.png"), 860, 0);
+            // v1.10: "connect Mum's laptop" from Hallow Remote - the PC outlined and its code filled in, nothing started
+            c.SelectedPc = "302118457"; main.Build(); main.SelectPc(c.S.FindPc("302118457")); Snap.Save(main, Path.Combine(dir, "main-yourpcs-selected.png"), 860, 0); c.SelectedPc = null;
             var now = DateTime.Now;
             var hist = new List<HistoryEntry> {
                 new HistoryEntry { Start = now.AddMinutes(-42).ToString("o"), End = now.AddMinutes(-18).ToString("o"), Helper = "Dom", Client = "app", ControlAllowed = true, InputUsed = true, FilesReceived = 1 },
@@ -146,6 +148,8 @@ namespace HallowAssist
         DrawOverlay overlay; public int DrawStrokes;
         HistoryEntry histEntry; HostSession histHost; long histInputStart; int histFiles;
         public Dictionary<string, string> PcStatus = new Dictionary<string, string>(); bool statusBusy;
+        // v1.10: when each PC's dot was last checked (for status.json), the last look, and the PC "connect <name>" selected
+        public Dictionary<string, DateTime> PcChecked = new Dictionary<string, DateTime>(); DateTime lastPcCheckUtc = DateTime.MinValue; public string SelectedPc;
         class RestartWait { public string Code, Name; public byte[] Key; public DateTime Since; public bool SawOffline; }
         RestartWait restartWait;
         bool recNoticeBlocked;   // v1.5 tests: the red bar "can't" show Recording (the notice isn't confirmed)
@@ -641,7 +645,7 @@ namespace HallowAssist
                     wakeBusy = false;
                     string st = null; if (r != null) r.TryGetValue(w.Code, out st);
                     if (wakeWait != w || st == null) return;
-                    PcStatus[w.Code] = st; if (main != null) main.ShowPcStatus();
+                    PcStatus[w.Code] = st; PcChecked[w.Code] = DateTime.Now; if (main != null) main.ShowPcStatus(); WriteStatus();
                     if (st == "online" || st == "busy")
                     {
                         wakeWait = null; WakeState = "online"; if (wakeTimer != null) wakeTimer.Stop();
@@ -652,17 +656,37 @@ namespace HallowAssist
         }
         public void CancelWake() { wakeWait = null; WakeState = ""; if (wakeTimer != null) wakeTimer.Stop(); if (main != null) main.RefreshHelpSomeone(); }
 
-        // ---------------- v1.2: online dots for Your PCs (only while the main window is open)
-        public void RefreshPcStatus()
+        // ---------------- v1.2: online dots for Your PCs - while the main window is open on every call;
+        // v1.10: also every 2 minutes while Assist runs in the tray with a relay set, so status.json can share them (now = at once)
+        public void RefreshPcStatus(bool now = false)
         {
             var uri = AssistSettings.WsUri(S.RelayUrl);
-            if (statusBusy || uri == null || main == null || !main.IsVisible || S.Pcs.Count == 0 || snap) return;
-            statusBusy = true; var codes = S.Pcs.Select(p => p.Code).ToList();
+            if (statusBusy || uri == null || S.Pcs.Count == 0 || snap) return;
+            if (!now && !PcShare.Due(main != null && main.IsVisible, lastPcCheckUtc, DateTime.UtcNow)) return;
+            statusBusy = true; lastPcCheckUtc = DateTime.UtcNow; var codes = S.Pcs.Select(p => p.Code).ToList();
             new Thread(() =>
             {
                 var r = RelayStatus.Query(uri, codes);
-                ui.BeginInvoke(new Action(() => { statusBusy = false; PcStatus = r ?? new Dictionary<string, string>(); if (main != null) main.ShowPcStatus(); }));
+                ui.BeginInvoke(new Action(() =>
+                {
+                    statusBusy = false; PcStatus = r ?? new Dictionary<string, string>();
+                    var t = DateTime.Now; foreach (var cd in codes) PcChecked[cd] = t;   // a relay that couldn't be asked -> "unknown", checked now
+                    if (main != null) main.ShowPcStatus();
+                    WriteStatus();
+                }));
             }) { IsBackground = true, Name = "pc status" }.Start();
+        }
+        // v1.10 pipe "connect <name>": the window opens with that PC selected - never a session by itself (you click Connect)
+        string ConnectCommand(string name)
+        {
+            var pc = PcShare.Find(S.Pcs, name);
+            if (pc == null) return "error No PC called “" + Family.OneLine(name) + "” in Your PCs";
+            if (Viewer != null && Viewer.State != ViewerState.Ended) { ShowMain(); return "error You're already connected to a PC"; }
+            SelectedPc = pc.Code;
+            ShowMain();
+            if (main != null) main.SelectPc(pc);
+            Log("connect " + pc.Name + ": selected in the window (nothing starts until you click Connect)");
+            return "ok";
         }
 
         static DateTime Parse(string iso) { DateTime d; return DateTime.TryParse(iso, null, System.Globalization.DateTimeStyles.RoundtripKind, out d) ? d : DateTime.MinValue; }
@@ -675,7 +699,7 @@ namespace HallowAssist
             v.AllowDirect = !S.DirectOff;
             v.Player = AssistSettings.TestDir != null ? (IAudioSink)new CountingSink() : new WaveOutSink();   // tests never make a sound
             v.Detail += t => Log(t);
-            Viewer = v;
+            Viewer = v; SelectedPc = null;
             v.Changed += () => ui.BeginInvoke(new Action(() => { if (main != null) main.RefreshHelpSomeone(); WriteStatus(); UpdateTrayText(); }));
             v.Chat += t => Log("chat from host: " + t);
             v.Note += t => Log(t);
@@ -830,7 +854,8 @@ namespace HallowAssist
                 { "session", host == null || host.State == HostState.Ended || (host.Unattended && host.State != HostState.Connected && host.State != HostState.Asking) ? "none" : host.State == HostState.Connected ? "connected" : host.State == HostState.Asking ? "asking" : "waiting" },
                 { "helping", Viewer != null && Viewer.State != ViewerState.Ended },
                 { "unattended", S.Unattended }, { "relaySet", AssistSettings.WsUri(S.RelayUrl) != null },
-                { "lastCrash", Crash.LastTime() == null ? null : Family.Time(Crash.LastTime().Value) } };
+                { "lastCrash", Crash.LastTime() == null ? null : Family.Time(Crash.LastTime().Value) },
+                { "pcs", PcShare.List(S.Pcs, PcStatus, PcChecked) } };   // v1.10: Your PCs - name and online state only
             if (AssistSettings.TestDir != null) d["test"] = TestState();
             Family.WriteStatus(Family.Json(d));
         }
@@ -842,7 +867,7 @@ namespace HallowAssist
                 t["recording"] = h.RecordingAsked; t["recNotice"] = h.RecordingNoticeShown; t["recNoticeAt"] = h.NoticeShownAt; }
             t["barText"] = h != null && h.State == HostState.Connected ? string.Join(" | ", HelpBar.Lines(h.HelperName, h.Control, h.Clipboard, h.Unattended, h.Safety, hotkeyOk, h.SoundShared, h.RecordingAsked, h.ClipboardBy)) : null; t["wake"] = WakeState;
             t["pcs"] = S.Pcs.Select(p => new Dictionary<string, object> { { "code", p.Code }, { "name", p.Name }, { "mac", p.Mac }, { "keysItem", p.KeysItem }, { "remembered", p.Key != null } }).ToArray();
-            t["keys"] = KeysNote; t["askingKeys"] = keysBusy;
+            t["keys"] = KeysNote; t["askingKeys"] = keysBusy; t["selectedPc"] = SelectedPc; t["pcChecks"] = PcChecked.Count;   // v1.10
             t["consentPending"] = pendingConsent != null; t["bar"] = barVisible; t["hotkey"] = hotkeyRegistered; t["panics"] = Panics; t["startsWithWindows"] = StartsWithWindows();
             lock (pendingFiles) t["filesPending"] = pendingFiles.Count;
             t["fileAskPending"] = pendingFileAsk != null; if (h != null) { t["pullPending"] = h.PullPending; t["pullsAsked"] = h.PullsAsked; t["pullsAllowed"] = h.PullsAllowed; t["hostFileOffers"] = h.Files.OffersSent; t["hostFileBytes"] = h.Files.BytesSent; t["pullsAuto"] = h.PullsAuto; }   // v1.6
@@ -867,6 +892,7 @@ namespace HallowAssist
                 case "menu": return OnUi(() => "ok " + Family.Json(new Dictionary<string, object> { { "app", "Assist" }, { "items", MenuItems() } }));
                 case "invoke": return OnUi(() => Invoke(arg));
                 case "disconnect": return OnUi(() => Invoke("disconnect"));
+                case "connect": return OnUi(() => ConnectCommand(arg));   // v1.10: only selects the PC in the window
                 case "quit": new Thread(() => { Thread.Sleep(300); ui.BeginInvoke(new Action(Quit)); }) { IsBackground = true }.Start(); return "ok";
             }
             if (AssistSettings.TestDir != null && cmd.StartsWith("test-")) return OnUi(() => TestCommand(cmd, arg));
@@ -965,6 +991,7 @@ namespace HallowAssist
                 case "test-view-rec": if (a.Length > 0 && a[0] == "on") return Viewer.StartRecording() ?? "ok"; Viewer.StopRecording("You stopped recording.", true); return "ok";
                 case "test-host-rec-stop": if (host == null) return "error no session"; host.StopRecording(); return "ok";
                 case "test-rec-noshow": { recNoticeBlocked = a.Length > 0 && a[0] == "on"; var hh = host; if (hh != null) HostChanged(hh); return "ok"; }
+                case "test-pcs-refresh": RefreshPcStatus(true); return "ok";   // v1.10: the tray refresh, now instead of in 2 minutes
                 case "test-wake": { var pc = S.FindPc(arg); if (pc == null) return "error no such PC"; if (Wol.ParseMac(pc.Mac) == null) return "error no MAC yet"; WakeState = "sending"; Wake(pc); return "ok"; }
             }
             return "error unknown test command";
