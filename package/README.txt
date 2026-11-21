@@ -35,6 +35,9 @@ PRIVACY
 - End-to-end encrypted: your relay passes sealed messages along and can't see screens,
   keys, chat or files. Crash reports stay on this PC. Nothing else is sent anywhere.
 
+WHAT'S NEW IN 1.8
+- New app icon: a hand holding a heart, in the Hallow family style (the relay's web page too).
+
 WHAT'S NEW IN 1.7
 - Your own PCs (unattended sessions) share their copied files without a question: "Copy their files
   here" sends them right away (you're still asked before saving), the PC's Connection history says

@@ -55,6 +55,8 @@ end-to-end encrypted.
 
 ## What's new
 
+- **1.8** - **New app icon**: a hand holding a heart, in the Hallow family style - the app and the relay's web page
+  (redeploy the relay to see it there). Nothing else changed.
 - **1.7** - **Your own PCs share their copied files without a question**: in an **unattended** session (one of your own
   PCs, connected with its unattended password) **Copy their files here** no longer waits for an Allow that nobody is
   there to click. The PC sends exactly the copied files by itself (your side still asks before saving them), writes
