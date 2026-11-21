@@ -4,6 +4,7 @@
 //   node tests/integration.mjs <work folder>
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import dgram from 'node:dgram';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
@@ -30,10 +31,16 @@ const port = await relay.listen(0, '127.0.0.1');
 const RELAY = `http://127.0.0.1:${port}`;
 console.log('relay on', RELAY);
 
+// ---- v1.4: a local UDP listener stands in for the sleeping PC's network card (Wake-on-LAN); test mode only ever sends there
+const wolPackets = [];
+const wol = dgram.createSocket('udp4'); wol.on('message', m => wolPackets.push(Buffer.from(m)));
+await new Promise(r => wol.bind(0, '127.0.0.1', r));
+const WOL_PORT = wol.address().port;
+
 // ---- app instances
 const dirs = { host: path.join(WORK, 'host'), viewer: path.join(WORK, 'viewer') };
 for (const d of Object.values(dirs)) { fs.rmSync(d, { recursive: true, force: true }); fs.mkdirSync(d, { recursive: true }); }
-const env = role => ({ ...process.env, HALLOW_ASSIST_TESTDIR: dirs[role], HALLOW_ASSIST_FAKE: '1', HALLOW_ASSIST_HEADLESS: '1', HALLOW_ASSIST_RELAY: RELAY });
+const env = role => ({ ...process.env, HALLOW_ASSIST_TESTDIR: dirs[role], HALLOW_ASSIST_FAKE: '1', HALLOW_ASSIST_HEADLESS: '1', HALLOW_ASSIST_RELAY: RELAY, HALLOW_ASSIST_WOL_PORT: String(WOL_PORT) });
 const procs = {};
 function launch(role) { procs[role] = spawn(EXE, ['--tray'], { env: env(role), stdio: 'ignore', windowsHide: true }); procs[role].on('exit', c => { procs[role + 'Exit'] = c; }); }
 function cmd(role, line) {
@@ -397,6 +404,84 @@ await step('direct connection (v1.3): on the same network the PCs talk directly 
   } finally { cmd('host', 'test-direct relay'); cmd('viewer', 'test-direct relay'); }
 });
 
+// ---- v1.4
+await step('direct connection drop (v1.4): the session falls back to the relay and keeps going (picture, input, chat)', async () => {
+  cmd('host', 'test-direct on'); cmd('viewer', 'test-direct on');
+  try {
+    sess = await newHostSession();
+    await connectViewer(sess.code, sess.password); await until(() => T('host').consentPending, 10000, 'consent');
+    cmd('host', 'test-consent allow control');
+    await until(() => T('viewer').frames > 0, 10000, 'frames');
+    await until(() => T('host').direct === true && T('viewer').viewerDirect === true, 20000, 'both sides direct');
+    const relayedSealed = () => forwarded.filter(f => f.data[0] === P.T.SEALED).length;
+    const before = relayedSealed();
+    cmd('viewer', 'test-view-cut-direct');
+    await until(() => T('host').direct === false && T('viewer').viewerDirect === false, 10000, 'both sides back on the relay');
+    assert.equal(T('host').host, 'Connected'); assert.equal(T('viewer').viewer, 'Connected');
+    const f0 = T('viewer').frames, n0 = inputLog().length;
+    cmd('viewer', 'test-view-monitor 1'); await until(() => T('viewer').monitor === 1 && T('viewer').frames > f0, 8000, 'frames over the relay after the drop');
+    cmd('viewer', 'test-view-move 32768 32768'); await until(() => inputLog().slice(n0).some(e => e.t === 'move'), 5000, 'input over the relay after the drop');
+    cmd('viewer', 'test-view-chat after the drop'); await until(() => T('host').log.some(l => l.includes('chat from helper: after the drop')), 5000, 'chat after the drop');
+    cmd('host', 'test-host-chat host after the drop'); await until(() => T('viewer').log.some(l => l.includes('chat from host: host after the drop')), 5000, 'chat back after the drop');
+    assert.ok(relayedSealed() > before, 'sealed messages go through the relay again');
+    assert.ok(T('host').log.some(l => /back on the relay/.test(l)) || T('viewer').log.some(l => /back on the relay/.test(l)), 'the drop is in the details');
+    cmd('viewer', 'test-view-monitor 0'); await until(() => T('viewer').monitor === 0, 5000, 'back to monitor 1');
+    cmd('viewer', 'test-view-end');
+    await until(() => T('host').host === 'Ended', 8000, 'host ended');
+    assert.match(T('host').endReason, /helper ended/i);
+  } finally { cmd('host', 'test-direct relay'); cmd('viewer', 'test-direct relay'); }
+});
+
+await step('session sound (v1.4): off on both sides by default; flows only when the helper asks AND the PC shares it; the bar says "Sound shared"', async () => {
+  sess = await newHostSession();
+  await connectViewer(sess.code, sess.password); await until(() => T('host').consentPending, 10000, 'consent');
+  cmd('host', 'test-consent allow');
+  await until(() => T('viewer').frames > 0, 10000, 'frames');
+  assert.equal(T('host').soundShared, false); assert.equal(T('viewer').viewerSound, false); assert.ok(!/Sound shared/.test(T('host').barText));
+  assert.equal(T('viewer').hostMac, null, 'a PC without unattended access never tells its network adapter');
+  cmd('viewer', 'test-view-sound on');
+  await until(() => T('host').log.some(l => l.includes('would like to hear')), 5000, 'the PC is asked');
+  await sleep(1000);
+  assert.equal(T('host').soundFlowing, false); assert.equal(T('viewer').audioPackets, 0, 'nothing before the PC shares it');
+  cmd('host', 'test-host-sound on');
+  await until(() => /Sound shared/.test(T('host').barText) && T('viewer').hostSharesSound === true, 5000, 'bar says Sound shared');
+  await until(() => T('viewer').audioSamples >= 16000, 8000, 'a second of sound at the helper');
+  const v = T('viewer'); assert.ok(Math.abs(v.audioHz - 440) < 25, 'the test tone arrives as 440 Hz: ' + v.audioHz);
+  cmd('viewer', 'test-view-sound off');
+  await until(() => T('host').soundFlowing === false, 5000, 'stops when the helper turns it off');
+  const p0 = T('viewer').audioPackets; await sleep(800); assert.equal(T('viewer').audioPackets, p0);
+  cmd('viewer', 'test-view-sound on'); await until(() => T('host').soundFlowing === true, 5000, 'flows again');
+  cmd('host', 'test-host-sound off');
+  await until(() => T('host').soundFlowing === false && !/Sound shared/.test(T('host').barText) && T('viewer').hostSharesSound === false, 5000, 'Stop sound on the bar');
+  const all = Buffer.concat(forwarded.map(f => f.data)); assert.ok(forwarded.every(f => f.data[0] === P.T.SEALED || f.data.length <= 83), 'sound only ever crossed the relay sealed');
+  cmd('viewer', 'test-view-end'); await until(() => T('host').host === 'Ended', 5000, 'ended');
+});
+
+await step('Wake-on-LAN (v1.4): one of Your PCs tells its owner its network adapter (unattended only); Wake sends the magic packet on ports 7/9, then waits for the online dot', async () => {
+  const r = okJson(cmd('host', 'test-unattended-on Correct-Horse-42!'));
+  try {
+    await until(() => T('host').host === 'Waiting' && T('host').unattendedHost, 10000, 'unattended waiting');
+    assert.equal(cmd('viewer', 'test-savepc ' + r.code + ' Office PC'), 'ok');
+    assert.equal(T('viewer').pcs.find(p => p.code === r.code).mac, null);
+    assert.match(cmd('viewer', 'test-wake ' + r.code), /^error no MAC/);
+    await connectViewer(r.code, 'Correct-Horse-42!', 'Me');
+    await until(() => T('viewer').frames > 0, 10000, 'unattended frames');
+    assert.equal(T('viewer').hostSharesSound, false, 'sound is off in unattended sessions unless turned on in Settings');
+    await until(() => (T('viewer').pcs.find(p => p.code === r.code) || {}).mac === '02005E102030', 5000, 'the MAC is learned');
+    const settings = fs.readFileSync(path.join(dirs.viewer, 'settings.json'), 'utf8'); assert.ok(settings.includes('02005E102030'));
+    wolPackets.length = 0;
+    assert.equal(cmd('viewer', 'test-wake ' + r.code), 'ok');
+    await until(() => wolPackets.length >= 1, 5000, 'magic packet');
+    const pk = wolPackets[0]; const mac = Buffer.from('02005E102030', 'hex');
+    assert.equal(pk.length, 102); assert.ok(pk.subarray(0, 6).every(b => b === 0xff));
+    for (let i = 0; i < 16; i++) assert.ok(pk.subarray(6 + i * 6, 12 + i * 6).equals(mac), 'repeat ' + i);
+    await until(() => T('viewer').wake === 'online', 10000, 'waits for the online dot');
+    cmd('viewer', 'test-view-end');
+    await until(() => T('host').host === 'Waiting', 8000, 'unattended keeps waiting');
+  } finally { cmd('host', 'test-unattended-off'); }
+  await until(() => status('host').unattended === false, 5000, 'unattended off');
+});
+
 await step('closing the app (host) ends a connected session; the helper is told', async () => {
   sess = await newHostSession();
   await connectViewer(sess.code, sess.password); await until(() => T('host').consentPending, 10000, 'consent');
@@ -410,6 +495,7 @@ cmd('viewer', 'quit');
 await sleep(800);
 for (const p of Object.values(procs)) { try { if (p && p.kill) p.kill(); } catch { } }
 await relay.close();
+try { wol.close(); } catch { }
 console.log(`\n${passed} passed, ${failed} failed`);
 fs.writeFileSync(path.join(WORK, 'integration-results.txt'), results.join('\n') + `\n${passed} passed, ${failed} failed\n`);
 process.exit(failed ? 1 : 0);

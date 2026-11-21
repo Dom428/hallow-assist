@@ -18,7 +18,7 @@ namespace HallowAssist
         [DllImport("user32.dll")] static extern uint MapVirtualKey(uint code, uint type);
         readonly ViewerSession v;
         readonly Image img; readonly Border stage; readonly TextBlock status, banner, stats, safetyText; readonly StackPanel monitors;
-        readonly ToggleButton controlBtn, clipBtn, drawBtn; readonly ComboBox quality; readonly Border waitPanel; readonly Button restartBtn;
+        readonly ToggleButton controlBtn, clipBtn, drawBtn, soundBtn; readonly ComboBox quality; readonly Border waitPanel; readonly Button restartBtn;
         // v1.2: drawing on their screen - strokes go out in small batches while you drag
         bool drawOn, drawing; long strokeId = new Random().Next(1, 1 << 30); readonly System.Collections.Generic.List<int> drawPts = new System.Collections.Generic.List<int>(); DispatcherTimer drawFlush;
         WriteableBitmap wb; ChatWindow chat;
@@ -41,6 +41,10 @@ namespace HallowAssist
             clipBtn = new ToggleButton { Content = "Sync clipboard", Style = Ui.S("Chip"), Margin = new Thickness(0, 0, 6, 4), ToolTip = "Copied text goes both ways (only if they turned on clipboard sharing)" };
             clipBtn.Click += (s, e) => v.ClipSync = clipBtn.IsChecked == true;
             bar.Children.Add(clipBtn);
+            // v1.4: their PC's sound - off until you turn it on, and only while they share it
+            soundBtn = new ToggleButton { Content = "Sound", Style = Ui.S("Chip"), Margin = new Thickness(0, 0, 6, 4), ToolTip = "Hear their PC's sound. Off until you turn it on, and it only plays while they have Share sound on (their red bar says so)." };
+            soundBtn.Click += (s, e) => v.SetSound(soundBtn.IsChecked == true);
+            bar.Children.Add(soundBtn);
             drawBtn = new ToggleButton { Content = "Draw", Style = Ui.S("Chip"), Margin = new Thickness(0, 0, 6, 4), ToolTip = "Draw on their screen to show them where to click (lines fade after a few seconds). Right-click clears. Works in view-only sessions too." };
             drawBtn.Click += (s, e) => { drawOn = drawBtn.IsChecked == true; img.Cursor = drawOn ? Cursors.Pen : Cursors.Arrow; if (!drawOn) EndStroke(); };
             bar.Children.Add(drawBtn);
@@ -171,6 +175,9 @@ namespace HallowAssist
             restartBtn.Visibility = v.HostUnattended ? Visibility.Visible : Visibility.Collapsed; restartBtn.IsEnabled = v.CanRestart;
             controlBtn.IsEnabled = v.ControlAllowed; controlBtn.IsChecked = v.ControlAllowed && controlOn; controlBtn.Content = v.ControlAllowed ? "Control" : "View only";
             clipBtn.IsEnabled = v.ClipboardAllowed; if (!v.ClipboardAllowed) { clipBtn.IsChecked = false; v.ClipSync = false; }
+            soundBtn.IsEnabled = v.State == ViewerState.Connected && v.HostHasSound; soundBtn.IsChecked = v.SoundOn;
+            soundBtn.Content = v.SoundOn && !v.HostSharesSound ? "Sound (they haven't shared it)" : "Sound";
+            stats.ToolTip = string.IsNullOrEmpty(v.PathNote) ? null : v.PathNote;
             monitors.Children.Clear();
             if (v.Monitors.Length > 1)
                 for (int i = 0; i < v.Monitors.Length; i++)

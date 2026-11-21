@@ -66,8 +66,8 @@ namespace HallowAssist
     public class HelpBar : Window
     {
         [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
-        readonly TextBlock text, sub; readonly Button controlBtn, clipBtn;
-        public Action Disconnect, ToggleControl, ToggleClipboard, OpenChat, SendFile;
+        readonly TextBlock text, sub; readonly Button controlBtn, clipBtn, soundBtn;
+        public Action Disconnect, ToggleControl, ToggleClipboard, OpenChat, SendFile, ToggleSound;
         bool allowClose; DispatcherTimer topTimer;
         public HelpBar()
         {
@@ -84,7 +84,9 @@ namespace HallowAssist
             texts.Children.Add(text); texts.Children.Add(sub); row.Children.Add(texts);
             controlBtn = Ui.Btn("Stop control", () => { if (ToggleControl != null) ToggleControl(); });
             clipBtn = Ui.Btn("Share clipboard", () => { if (ToggleClipboard != null) ToggleClipboard(); });
-            row.Children.Add(controlBtn); row.Children.Add(clipBtn);
+            soundBtn = Ui.Btn("Share sound", () => { if (ToggleSound != null) ToggleSound(); });   // v1.4
+            soundBtn.ToolTip = "Let your helper hear this PC\u2019s sound (only while this is on and they turned Sound on).";
+            row.Children.Add(controlBtn); row.Children.Add(clipBtn); row.Children.Add(soundBtn);
             row.Children.Add(Ui.Btn("Chat", () => { if (OpenChat != null) OpenChat(); }));
             row.Children.Add(Ui.Btn("Send a file", () => { if (SendFile != null) SendFile(); }));
             var disc = Ui.Btn("Disconnect", () => { if (Disconnect != null) Disconnect(); }, true); disc.Margin = new Thickness(0);
@@ -101,12 +103,19 @@ namespace HallowAssist
                 topTimer.Start();
             }
         }
-        public void Update(string helper, bool control, bool clipboard, bool unattended, string safety, bool hotkeyOk)
+        // v1.4: the two lines of the bar (also used by the tests, which run without windows)
+        public static string[] Lines(string helper, bool control, bool clipboard, bool unattended, string safety, bool hotkeyOk, bool sound)
         {
-            text.Text = helper + " can see your screen" + (control ? " and control it" : "") + (unattended ? " (unattended access)" : "");
-            sub.Text = "Safety code " + safety + "  ·  " + (hotkeyOk ? "Ctrl+Alt+End disconnects" : "Use Disconnect to end it") + (clipboard ? "  ·  clipboard shared" : "");
+            return new[] { helper + " can see your screen" + (control ? " and control it" : "") + (unattended ? " (unattended access)" : "") + (sound ? "  \u00b7  Sound shared" : ""),
+                "Safety code " + safety + "  \u00b7  " + (hotkeyOk ? "Ctrl+Alt+End disconnects" : "Use Disconnect to end it") + (clipboard ? "  \u00b7  clipboard shared" : "") };
+        }
+        public void Update(string helper, bool control, bool clipboard, bool unattended, string safety, bool hotkeyOk, bool sound = false, bool soundAvailable = true)
+        {
+            var l = Lines(helper, control, clipboard, unattended, safety, hotkeyOk, sound);
+            text.Text = l[0]; sub.Text = l[1];
             controlBtn.Content = control ? "Stop control" : "Allow control";
             clipBtn.Content = clipboard ? "Stop clipboard" : "Share clipboard";
+            soundBtn.Content = sound ? "Stop sound" : "Share sound"; soundBtn.Visibility = soundAvailable ? Visibility.Visible : Visibility.Collapsed;
         }
         public void CloseForGood() { allowClose = true; if (topTimer != null) topTimer.Stop(); Close(); }
     }

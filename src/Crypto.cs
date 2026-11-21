@@ -181,15 +181,20 @@ namespace HallowAssist
         // callers that send must keep the order of Seal calls = the order on the wire (the relay sender queue does)
         public byte[] Seal(byte[] plain) { lock (sendLock) { var ctr = ++sendCtr; var head = new byte[9]; head[0] = Sealed; for (int i = 0; i < 8; i++) head[1 + i] = (byte)(ctr >> (56 - 8 * i)); return Kdf.Cat(head, send.Seal(Iv(sendDir, ctr), plain, 0, plain.Length, head)); } }
         // throws on a changed, replayed or out-of-order message
-        public byte[] Open(byte[] msg)
+        public byte[] Open(byte[] msg) { return Open(msg, null); }
+        // v1.4: gapOk = a message further ahead is accepted only if it is authentic AND gapOk says yes to its contents (the
+        // "relay-again" marker after a direct link dropped). Never a replay or an older message.
+        public byte[] Open(byte[] msg, Func<byte[], bool> gapOk)
         {
             lock (recvLock)
             {
                 if (msg.Length < 25 || msg[0] != Sealed) throw new CryptographicException("not a sealed message");
                 long ctr = 0; for (int i = 0; i < 8; i++) ctr = (ctr << 8) | msg[1 + i];
-                if (ctr != recvCtr + 1) throw new CryptographicException(ctr <= recvCtr ? "replayed message" : "message out of order");
+                if (ctr <= recvCtr) throw new CryptographicException("replayed message");
+                if (ctr != recvCtr + 1 && gapOk == null) throw new CryptographicException("message out of order");
                 var plain = recv.Open(Iv(recvDir, ctr), msg, 9, msg.Length - 9, Kdf.Slice(msg, 0, 9));
                 if (plain == null) throw new CryptographicException("message was changed on the way");
+                if (ctr != recvCtr + 1 && !gapOk(plain)) throw new CryptographicException("message out of order");
                 recvCtr = ctr; return plain;
             }
         }

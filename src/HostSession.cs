@@ -21,7 +21,9 @@ namespace HallowAssist
     {
         public Uri Relay; public string Quality = "auto";
         public bool Unattended; public string PersistSecret; public byte[] UnattendedKey;
-        public bool AllowDirect = true;   // v1.3: connect out to the helper's PC directly when it's on the same network   // unattended: the derived key, never the password
+        public bool AllowDirect = true;   // v1.3: connect out to the helper's PC directly when it's on the same network
+        public IAudioSource Audio;        // v1.4: this PC's sound (only while Share sound is on and the helper asked for it)
+        public bool SoundUnattended;      // v1.4: unattended sessions start with Share sound on (a setting, off by default)
         public ScreenSource Screen; public IInputSink Input; public IClip Clip; public string DownloadDir;
     }
 
@@ -30,6 +32,7 @@ namespace HallowAssist
         readonly HostOptions o;
         RelayLink link; Channel chan; EcdhKey ecdh; SessionKeys keys; byte[] pwKey; byte[] viewerPub;
         Transport tx; DirectLink direct; int directTried;   // v1.3
+        bool peerFellBack;                                   // v1.4: the helper's app went back to the relay
         public bool Direct { get { var t = tx; return t != null && t.IsDirect; } }
         public volatile HostState State = HostState.Starting;
         public string Code, Password, HelperName, HelperClient, Safety, EndReason;
@@ -50,6 +53,8 @@ namespace HallowAssist
         public event Action<MonitorInfo, long, int[]> Drawing;   // v1.2: the helper draws on this screen (monitor, stroke id, points)
         public event Action DrawClear;
         public event Action<string> RestartRequested;             // v1.2: unattended only - the helper restarts this PC
+        public event Action<string> Detail;                       // v1.4: connection details (the log), not shown on the bar or the main window
+        void Tell(string s) { var h = Detail; if (h != null) try { h(s); } catch { } }
 
         public HostSession(HostOptions opts)
         {
@@ -108,7 +113,8 @@ namespace HallowAssist
             handshakeId++; consentId++;
             if (chan != null) { chan.Dispose(); chan = null; }
             if (ecdh != null) { ecdh.Dispose(); ecdh = null; }
-            var d = direct; direct = null; tx = null; directTried = 0; if (d != null) d.Close("session reset");
+            var d = direct; direct = null; tx = null; directTried = 0; peerFellBack = false; if (d != null) d.Close("session reset");
+            StopSound(); SoundShared = false; soundWanted = false;
             keys = null; viewerPub = null; Control = false; Clipboard = false; HelperName = null; Safety = null;
             ReleaseAll(); Files.CancelAll();
         }
@@ -173,13 +179,16 @@ namespace HallowAssist
             object a; var addrs = new List<string>();
             if (m.TryGetValue("addrs", out a) && a is System.Collections.ArrayList) foreach (var x in (System.Collections.ArrayList)a) addrs.Add(Convert.ToString(x));
             byte[] token; try { token = Convert.FromBase64String(Msg.Str(m, "token") ?? ""); } catch { return; }
-            var eps = DirectNet.ParseEndpoints(addrs);
+            var offered = DirectNet.ParseEndpoints(addrs);
             var c = chan; var t = tx; var hid = handshakeId;
-            if (eps.Count == 0 || token.Length != DirectNet.TokenBytes || c == null || t == null) return;
+            if (offered.Count == 0 || token.Length != DirectNet.TokenBytes || c == null || t == null) return;
             new Thread(() =>
             {
-                var d = DirectConnector.Connect(eps, token, 2500);
-                if (d == null) { Say("Couldn't reach the helper's PC directly - staying on the relay."); return; }
+                // v1.4: only addresses on this PC's own subnets (and ports from 1024 up)
+                var eps = DirectNet.OnMyNetworks(offered, DirectNet.Adapters());
+                if (eps.Count == 0) { Tell("The helper's PC is on another network - staying on the relay."); return; }
+                var d = DirectConnector.Connect(eps, token, 2500, 3000);
+                if (d == null) { Tell("Couldn't reach the helper's PC directly - staying on the relay."); return; }
                 lock (gate) if (handshakeId != hid || State != HostState.Connected) { d.Close("too late"); return; }
                 d.Frame += t.OnDirectFrame;
                 d.Closed += r => { if (direct == d) DirectFailed(r); };
@@ -188,10 +197,21 @@ namespace HallowAssist
                 else { direct = null; d.Close("switch didn't happen"); }
             }) { IsBackground = true, Name = "direct connect" }.Start();
         }
+        // v1.4: a direct link that drops mid-session goes back to the relay when the relay is still connected
+        public void CutDirect(string why) { var d = direct; if (d != null) d.Close(why); }   // tests: the direct link drops
         void DirectFailed(string why)
         {
             var d = direct; direct = null; if (d != null) d.Close(why);
             if (State != HostState.Connected) return;
+            var t = tx; var c = chan; var l = link;
+            if (t != null && t.FellBack) return;   // already back on the relay
+            if (t != null && c != null && l != null && l.IsOpen)
+            {
+                t.Fallback(() => c.Seal(Transport.MarkerPlain()));
+                lock (inflight) inflight.Clear(); keyframe = true;   // acks lost with the link don't hold the picture up
+                Tell("The direct connection dropped (" + why + ") - back on the relay.");
+                Fire(); return;
+            }
             Say("The direct connection dropped (" + why + ").");
             if (o.Unattended) { lock (gate) Kick("direct connection dropped"); }
             else End("The direct connection to your helper dropped. Click Get help again to reconnect.", false);
@@ -204,7 +224,7 @@ namespace HallowAssist
             lock (gate)
             {
                 if (chan == null) { Kick("sealed before the handshake"); return; }
-                try { p = chan.Open(b); }
+                try { p = chan.Open(b, directTried == 1 && !peerFellBack ? (Func<byte[], bool>)Transport.IsMarker : null); }
                 catch (CryptographicException e) { Say("A message from the helper failed its check (" + e.Message + ") - disconnected to be safe."); if (o.Unattended) Kick(e.Message); else End("A message failed its security check, so the session was closed.", true); return; }
             }
             if (p.Length == 0) return;
@@ -245,6 +265,11 @@ namespace HallowAssist
                 case "refresh": keyframe = true; break;
                 case "direct-offer": TryDirect(m); break;
                 case "switch": { var sx = tx; if (sx != null) sx.PeerSwitched(); break; }
+                case "relay-again": { peerFellBack = true; var sx = tx; if (sx != null) sx.PeerFellBack(); if (direct != null) DirectFailed("the helper's app went back to the relay"); break; }
+                case "sound-want":
+                    soundWanted = Msg.Bool(m, "on");
+                    if (soundWanted && !SoundShared && o.Audio != null) Say((HelperName ?? "Your helper") + " would like to hear this PC's sound - click Share sound on the bar if that's OK.");
+                    UpdateSound(); break;
                 case "ping": SendJson("t", "pong", "ts", Msg.Num(m, "ts")); break;
                 case "chat": { var text = Msg.Str(m, "text") ?? ""; if (text.Length > 2000) text = text.Substring(0, 2000); var h = Chat; if (h != null) h(text); break; }
                 case "clip": if (Clipboard && o.Clip != null) { var text = Msg.Str(m, "text") ?? ""; if (text.Length <= 1000000) { lastClip = text; o.Clip.Set(text); Say("The helper put text on your clipboard."); } } break;
@@ -282,12 +307,15 @@ namespace HallowAssist
                 else
                 {
                     Control = a.Control; Clipboard = a.Clipboard; State = HostState.Connected;
+                    SoundShared = o.Unattended && o.SoundUnattended && o.Audio != null;
                     WrongPasswords = 0;   // v1.1: only wrong tries in a row count towards the unattended pause
                     var mons = o.Screen.Monitors();
-                    SendJson("t", "consent", "allowed", true, "control", Control, "clipboard", Clipboard, "unattended", o.Unattended,
+                    SendJson("t", "consent", "allowed", true, "control", Control, "clipboard", Clipboard, "unattended", o.Unattended, "sound", SoundShared, "soundAvailable", o.Audio != null,
                         "monitors", mons.Select((mm, i) => new Dictionary<string, object> { { "i", i }, { "w", mm.W }, { "h", mm.H }, { "primary", mm.Primary } }).ToArray());
                     monitor = Math.Max(0, Array.FindIndex(mons, mm => mm.Primary));
                     keyframe = true; inflight.Clear();
+                    // v1.4: your own PC tells its owner's app its network adapter (for Wake-on-LAN) - unattended sessions only
+                    if (o.Unattended) { var mac = DirectNet.PrimaryMac(); if (mac != null) SendJson("t", "mac", "mac", mac); }
                     var cid = consentId;
                     new Thread(() => CaptureLoop(cid)) { IsBackground = true, Name = "capture", Priority = ThreadPriority.BelowNormal }.Start();
                 }
@@ -308,6 +336,13 @@ namespace HallowAssist
             if (State != HostState.Connected) return;
             Clipboard = on; lastClip = null; SendJson("t", "clipboard", "on", on); Fire();
         }
+        // v1.4: Share sound (the red bar). Sound only flows while this is on AND the helper turned Sound on.
+        public void SetSound(bool on)
+        {
+            if (State != HostState.Connected || o.Audio == null) return;
+            SoundShared = on; SendJson("t", "sound", "on", on); UpdateSound(); Fire();
+        }
+        public bool SoundAvailable { get { return o.Audio != null; } }
         public void SendChat(string text) { if (State == HostState.Connected && !string.IsNullOrWhiteSpace(text)) SendJson("t", "chat", "text", text.Length > 2000 ? text.Substring(0, 2000) : text); }
         public string SendFile(string path) { if (State != HostState.Connected) return "Not connected."; return Files.Offer(path); }
         // Disconnect button, panic hotkey, closing the app
@@ -324,11 +359,35 @@ namespace HallowAssist
             lock (gate) { State = HostState.Ended; EndReason = reason; ReleaseAll(); Files.CancelAll(); }
             Crash.Secrets = new string[0];
             Password = null;
+            StopSound();
             var dl = direct; direct = null; if (dl != null) { dl.Drain(1500); dl.Close("session ended"); }   // "bye" first, then the relay
             if (link != null) link.Close(reason);
             Fire();
             var h = Ended; if (h != null) try { h(reason); } catch { }
         }
+
+        // ---- v1.4: sound
+        public volatile bool SoundShared; volatile bool soundWanted; volatile bool soundRunning; public long AudioPackets;
+        readonly object soundGate = new object();
+        public bool SoundFlowing { get { return soundRunning; } }
+        void UpdateSound()
+        {
+            bool want = State == HostState.Connected && SoundShared && soundWanted && o.Audio != null;
+            lock (soundGate)
+            {
+                if (want == soundRunning) return;
+                soundRunning = want;
+                if (!want) { try { o.Audio.Stop(); } catch { } return; }
+                var st = new int[2]; var cid = consentId;
+                o.Audio.Start(pcm =>
+                {
+                    if (!soundRunning || consentId != cid || State != HostState.Connected) return;
+                    if (Queued > 512 * 1024) return;   // the picture and input come first; a dropped 40 ms is just a short gap
+                    SendPlain(AudioMsg.FromPcm(pcm, pcm.Length, st).Encode()); AudioPackets++;
+                });
+            }
+        }
+        void StopSound() { lock (soundGate) { if (!soundRunning) return; soundRunning = false; try { if (o.Audio != null) o.Audio.Stop(); } catch { } } }
 
         // ---- input (only while connected and control is allowed). Held keys/buttons are let go when control stops.
         readonly HashSet<int> keysDown = new HashSet<int>(); readonly HashSet<int> buttonsDown = new HashSet<int>();

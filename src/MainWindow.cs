@@ -115,7 +115,7 @@ namespace HallowAssist
                     var save = Ui.Btn("Save this PC to Your PCs", () =>
                     {
                         var d = new SavePcDialog(v.Code, false) { Owner = this };
-                        if (d.ShowDialog() == true) { c.SavePc(d.PcName, v.Code, d.Remember ? v.PasswordKey : null); Say("Saved to Your PCs."); }
+                        if (d.ShowDialog() == true) { c.SavePc(d.PcName, v.Code, d.Remember ? v.PasswordKey : null, v.HostUnattended ? v.HostMac : null); Say("Saved to Your PCs."); }
                     });
                     save.HorizontalAlignment = HorizontalAlignment.Left; save.Margin = new Thickness(0, 10, 0, 0);
                     helpSomeone.Children.Add(save);
@@ -205,6 +205,16 @@ namespace HallowAssist
                     pw.Focus();
                 }, true);
                 connect.IsEnabled = canGo; DockPanel.SetDock(connect, Dock.Right); row.Children.Add(connect);
+                // v1.4: Wake-on-LAN, once this PC's network adapter is known (learned in an unattended session)
+                if (Wol.ParseMac(p.Mac) != null)
+                {
+                    string st; c.PcStatus.TryGetValue(p.Code, out st);
+                    var waking = c.Waking(p.Code);
+                    var wake = Ui.Btn(waking ? "Stop waiting" : "Wake", () => { if (c.Waking(p.Code)) c.CancelWake(); else c.Wake(p); });
+                    wake.ToolTip = "Wake " + p.Name + " from sleep or off (Wake-on-LAN, network adapter " + Wol.ShowMac(p.Mac) + "). Only works on the same network as this PC, with Wake-on-LAN turned on in its BIOS and its network adapter's settings.";
+                    wake.IsEnabled = waking || st != "online";
+                    wake.Margin = new Thickness(0, 0, 6, 0); DockPanel.SetDock(wake, Dock.Right); row.Children.Add(wake);
+                }
                 var info = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 12, 0) };
                 var nameText = Ui.T(p.Name, 13, true); nameText.TextTrimming = TextTrimming.CharacterEllipsis;
                 // v1.2: online dot (green = waiting for you, amber = someone is connected, grey = offline)
@@ -253,6 +263,7 @@ namespace HallowAssist
             ub.Children.Add(Ui.Switch("Unattended access to this PC - only for your own PCs (needs its own strong password and Start with Windows)", c.S.Unattended, v => c.SetUnattended(v)));
             unattendedInfo = Ui.Muted(UnattendedText(), 11.5, 0); unattendedInfo.Margin = new Thickness(52, 0, 0, 4);
             ub.Children.Add(unattendedInfo);
+            if (c.S.Unattended) ub.Children.Add(Ui.Switch("Share this PC's sound in unattended sessions (you can still stop it on the red bar) - off by default", c.S.SoundUnattended, v => { c.S.SoundUnattended = v; c.S.Save(); }));
             sp.Children.Add(ub);
             sp.Children.Add(Ui.Switch("Connect directly when both PCs are on the same network - faster and smoother (the helper's PC may ask once to allow Hallow Assist on private networks)", !c.S.DirectOff, v => { c.S.DirectOff = !v; c.S.Save(); }));
             var row = Ui.Row(Ui.Btn("Check for updates", () => c.CheckForUpdate(true)), Ui.Btn("Connection history", () => c.ShowHistory()), Ui.Btn("Open downloads folder", () => { try { System.IO.Directory.CreateDirectory(Transfers.DownloadFolder()); System.Diagnostics.Process.Start("explorer.exe", "\"" + Transfers.DownloadFolder() + "\""); } catch { } }));

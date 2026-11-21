@@ -22,7 +22,9 @@ namespace HallowAssist.Tests
             if (args.Contains("--dxgi-smoke")) return DxgiSmoke();
             if (args.Length >= 2 && args[0] == "--persist") { Console.WriteLine(Kdf.PersistentCode(args[1])); return 0; }
             if (args.Length >= 3 && args[0] == "--pwkey") { Console.WriteLine(Hex(Kdf.PasswordKey(args[1], args[2]))); return 0; }
-            try { Crypto(); Channels(); Tiles(); Inputs(); Protocol(); Misc(); }
+            if (args.Contains("--wasapi-smoke")) return WasapiSmoke();
+            if (args.Contains("--waveout-smoke")) return WaveOutSmoke();
+            try { Crypto(); Channels(); Tiles(); Inputs(); Protocol(); Misc(); V14(); }
             catch (Exception e) { fail++; Console.WriteLine("FAIL exception: " + e); }
             Console.WriteLine(pass + " passed, " + fail + " failed");
             return fail == 0 ? 0 : 1;
@@ -246,6 +248,168 @@ namespace HallowAssist.Tests
             Ok(!Desktop.SecureDesktopActive(), "secure desktop isn't active right now (normal desktop)");
         }
 
+        // ---------------- v1.4
+        static System.Net.Sockets.TcpListener Fake(Action<System.Net.Sockets.Socket> behave)
+        {
+            var l = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0); l.Start();
+            new System.Threading.Thread(() => { try { for (;;) { var s = l.AcceptSocket(); var t = new System.Threading.Thread(() => { try { behave(s); } catch { } }) { IsBackground = true }; t.Start(); } } catch { } }) { IsBackground = true }.Start();
+            return l;
+        }
+        static System.Net.IPEndPoint Ep(System.Net.Sockets.TcpListener l) { return (System.Net.IPEndPoint)l.LocalEndpoint; }
+        static byte[] ReadN(System.Net.Sockets.Socket s, int n) { var b = new byte[n]; using (var ns = new System.Net.Sockets.NetworkStream(s, false)) return DirectLink.ReadExactly(ns, b, n) ? b : null; }
+
+        static void V14()
+        {
+            var token = new byte[DirectNet.TokenBytes]; new Random(3).NextBytes(token);
+            var ph = DirectNet.Proof(token, "host"); var pv = DirectNet.Proof(token, "helper");
+            Ok(ph.Length == 32 && !ph.SequenceEqual(pv) && !ph.SequenceEqual(token) && !pv.SequenceEqual(token), "direct handshake: each direction proves the token differently and never sends it");
+
+            // the real helper: checks the host's proof, answers with its own, then frames flow
+            var good = Fake(s => { var got = ReadN(s, 32); if (got != null && got.SequenceEqual(ph)) { s.Send(pv); var link = new DirectLink(s); link.Frame += f => link.SendSealed(() => f.Reverse().ToArray(), f.Length); link.Start(); } else s.Close(); });
+            var wrong = Fake(s => { ReadN(s, 32); var junk = new byte[32]; new Random(9).NextBytes(junk); s.Send(junk); System.Threading.Thread.Sleep(3000); s.Close(); });   // another device on that address
+            var echo = Fake(s => { var got = ReadN(s, 32); if (got != null) s.Send(got); System.Threading.Thread.Sleep(3000); s.Close(); });                               // a device that echoes
+            var silent = Fake(s => { ReadN(s, 32); System.Threading.Thread.Sleep(6000); s.Close(); });                                                                    // accepts, never answers
+            var closer = Fake(s => s.Close());                                                                                                                          // accepts and hangs up
+            var free = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0); free.Start(); var freeEp = Ep(free); free.Stop();                       // nobody listening
+
+            var d = DirectConnector.Connect(new List<System.Net.IPEndPoint> { Ep(good) }, token, 1500, 1500);
+            bool roundTrip = false;
+            if (d != null) { var got = new System.Threading.ManualResetEvent(false); byte[] back = null; d.Frame += f => { back = f; got.Set(); }; d.Start(); d.SendSealed(() => new byte[] { 1, 2, 3 }, 3); roundTrip = got.WaitOne(3000) && back.SequenceEqual(new byte[] { 3, 2, 1 }); d.Close("test"); }
+            Ok(d != null && roundTrip, "direct handshake: the real helper answers with its proof, then messages flow");
+            Ok(DirectConnector.Connect(new List<System.Net.IPEndPoint> { Ep(wrong) }, token, 1500, 1500) == null, "direct handshake: a different device on that address and port is not used (stays on the relay)");
+            Ok(DirectConnector.Connect(new List<System.Net.IPEndPoint> { Ep(echo) }, token, 1500, 1500) == null, "direct handshake: a device that echoes what it gets is not used");
+            var sw = System.Diagnostics.Stopwatch.StartNew(); var t1 = DirectConnector.Connect(new List<System.Net.IPEndPoint> { Ep(silent) }, token, 1500, 1000); var ms = sw.ElapsedMilliseconds;
+            Ok(t1 == null && ms >= 900 && ms < 4000, "direct handshake: a device that never answers times out (" + ms + " ms) and is not used");
+            Ok(DirectConnector.Connect(new List<System.Net.IPEndPoint> { Ep(closer), freeEp }, token, 1500, 1500) == null, "direct handshake: a device that hangs up, and nobody listening, are not used");
+            var mixed = DirectConnector.Connect(new List<System.Net.IPEndPoint> { Ep(wrong), Ep(silent), Ep(good) }, token, 1500, 1500);
+            Ok(mixed != null, "direct handshake: among several addresses only the one with the real helper is taken"); if (mixed != null) mixed.Close("test");
+            foreach (var l in new[] { good, wrong, echo, silent, closer }) l.Stop();
+
+            // which of this PC's addresses are offered: the real home network first, virtual adapters last
+            Func<string, string, string, bool, System.Net.NetworkInformation.NetworkInterfaceType, NetAdapter> A = (ip, name, desc, gw, ty) => new NetAdapter { Address = System.Net.IPAddress.Parse(ip), Mask = System.Net.IPAddress.Parse("255.255.255.0"), Name = name, Description = desc, Gateway = gw, Type = ty };
+            var E = System.Net.NetworkInformation.NetworkInterfaceType.Ethernet; var W = System.Net.NetworkInformation.NetworkInterfaceType.Wireless80211;
+            var ads = new List<NetAdapter> {
+                A("172.20.112.1", "vEthernet (WSL)", "Hyper-V Virtual Ethernet Adapter", false, E), A("172.17.0.1", "vEthernet (Default Switch)", "Hyper-V Virtual Ethernet Adapter #2", false, E),
+                A("192.168.56.1", "Ethernet 3", "VirtualBox Host-Only Ethernet Adapter", false, E), A("172.18.0.1", "docker0", "Docker bridge", false, E),
+                A("10.8.0.2", "OpenVPN", "TAP-Windows Adapter V9", true, E), A("192.168.1.20", "Wi-Fi", "Intel(R) Wi-Fi 6E AX211", true, W), A("192.168.50.7", "Ethernet", "Realtek PCIe GbE", false, E) };
+            var ranked = DirectNet.Ranked(ads);
+            Ok(ranked[0].Address.ToString() == "192.168.1.20" && ranked[1].Address.ToString() == "192.168.50.7",
+                "direct: the real home network (gateway, not virtual) is offered first; Hyper-V/WSL/Docker/VirtualBox/VPN can't crowd it out");
+            Ok(DirectNet.LooksVirtual(ads[2]) && DirectNet.LooksVirtual(A("192.168.56.5", "Ethernet 9", "Some adapter", false, E)) && !DirectNet.LooksVirtual(ads[5]), "direct: virtual adapters are recognised (incl. VirtualBox's 192.168.56.x)");
+
+            // their PC only tries the helper's addresses on its own subnets, ports from 1024
+            Func<string, System.Net.IPEndPoint> P = x => { var i = x.LastIndexOf(':'); return new System.Net.IPEndPoint(System.Net.IPAddress.Parse(x.Substring(0, i)), int.Parse(x.Substring(i + 1))); };
+            var mine = new List<NetAdapter> { A("192.168.1.20", "Wi-Fi", "", true, W) };
+            var ok1 = DirectNet.OnMyNetworks(new[] { P("192.168.1.30:50000"), P("192.168.2.5:50000"), P("10.0.0.5:50000"), P("192.168.1.31:80"), P("192.168.1.32:1024") }, mine);
+            Ok(ok1.Count == 2 && ok1[0].ToString() == "192.168.1.30:50000" && ok1[1].ToString() == "192.168.1.32:1024", "direct: only the helper's addresses on this PC's own subnet, ports from 1024 (no probing of other networks or low ports)");
+            var wide = new List<NetAdapter> { new NetAdapter { Address = System.Net.IPAddress.Parse("10.1.2.3"), Mask = System.Net.IPAddress.Parse("255.0.0.0") } };
+            var ok2 = DirectNet.OnMyNetworks(new[] { P("10.1.9.9:50000"), P("10.2.0.1:50000") }, wide);
+            var nomask = DirectNet.OnMyNetworks(new[] { P("192.168.7.9:50000"), P("192.168.8.9:50000") }, new List<NetAdapter> { new NetAdapter { Address = System.Net.IPAddress.Parse("192.168.7.1") } });
+            Ok(ok2.Count == 1 && ok2[0].Address.ToString() == "10.1.9.9" && nomask.Count == 1 && nomask[0].Address.ToString() == "192.168.7.9", "direct: a very wide mask counts as /16, an unknown one as /24");
+            Ok(DirectNet.Prefix(System.Net.IPAddress.Parse("255.255.255.0")) == 24 && DirectNet.Prefix(System.Net.IPAddress.Parse("255.255.240.0")) == 20 && DirectNet.Prefix(null) == -1 &&
+               DirectNet.Broadcast(System.Net.IPAddress.Parse("192.168.1.20"), System.Net.IPAddress.Parse("255.255.255.0")).ToString() == "192.168.1.255" &&
+               DirectNet.Broadcast(System.Net.IPAddress.Parse("10.0.5.9"), System.Net.IPAddress.Parse("255.255.0.0")).ToString() == "10.0.255.255", "subnets: mask length and broadcast address");
+            Ok(DirectNet.ParseEndpoints(new[] { "192.168.1.5:1024", "192.168.1.5:1023" }).Count == 1, "direct: offered ports from 1024 up");
+
+            // the switch is abandoned (stays on the relay) when the "switch" isn't sealed in time - nothing is reordered
+            {
+                var relay = new GateSender(); var dir = new SlowSender(0); var tr = new Transport(relay); int ctr = 0; object cl = new object();
+                Func<byte[]> seal = () => { lock (cl) { ctr++; return BitConverter.GetBytes(ctr); } };
+                relay.Open = true; for (int i = 0; i < 5; i++) tr.SendSealed(seal, 4); System.Threading.Thread.Sleep(100);
+                relay.Open = false;   // the relay stalls just as the switch is queued
+                bool sw2 = tr.SwitchTo(dir, seal, 1000, 300);
+                for (int i = 0; i < 5; i++) tr.SendSealed(seal, 4);
+                relay.Open = true; System.Threading.Thread.Sleep(300);
+                var r = relay.Numbers();
+                Ok(!sw2 && !tr.IsDirect && dir.Numbers().Count == 0 && r.SequenceEqual(Enumerable.Range(1, 11)), "direct: a switch that isn't sent in time is abandoned - everything stays on the relay, in order");
+            }
+            // a direct link that drops: back to the relay, the marker first
+            {
+                var relay = new SlowSender(0); var dir = new SlowSender(0); var tr = new Transport(relay); int ctr = 0; object cl = new object();
+                Func<byte[]> seal = () => { lock (cl) { ctr++; return BitConverter.GetBytes(ctr); } };
+                tr.SendSealed(seal, 4); bool sw3 = tr.SwitchTo(dir, seal); tr.SendSealed(seal, 4); tr.SendSealed(seal, 4); System.Threading.Thread.Sleep(100);
+                int markerAt = 0; bool fb = tr.Fallback(() => { var x = seal(); markerAt = BitConverter.ToInt32(x, 0); return x; });
+                tr.SendSealed(seal, 4); System.Threading.Thread.Sleep(150);
+                var r = relay.Numbers(); var dn = dir.Numbers();
+                Ok(sw3 && fb && !tr.IsDirect && tr.FellBack && dn.SequenceEqual(new[] { 3, 4 }) && r.SequenceEqual(new[] { 1, 2, 5, 6 }) && markerAt == 5 && !tr.SwitchTo(dir, seal), "direct: a dropped link goes back to the relay - the marker first, then everything else; no second switch");
+                var rt = new Transport(new SlowSender(0)); bool second = rt.Fallback(() => new byte[] { 1 });
+                Ok(!second, "direct: falling back while still on the relay sends no marker");
+            }
+            // the receiver accepts lost counters only for the authentic marker
+            {
+                SessionKeys v, h; Pair(out v, out h); var cv = new Channel(v, false); var ch = new Channel(h, true);
+                var m1 = cv.Seal(Kdf.Utf8("one")); cv.Seal(Kdf.Utf8("lost 1")); cv.Seal(Kdf.Utf8("lost 2")); var m4 = cv.Seal(Msg.JsonMsg("t", "chat", "text", "not a marker"));
+                var mk = cv.Seal(Transport.MarkerPlain()); var m6 = cv.Seal(Kdf.Utf8("after"));
+                ch.Open(m1);
+                Ok(Throws(() => ch.Open(m4, Transport.IsMarker), "out of order"), "fallback: a jump in the counter is refused for anything but the marker");
+                Ok(Throws(() => ch.Open(mk), "out of order"), "fallback: the marker is refused too when no direct link was used");
+                var fake = (byte[])mk.Clone(); fake[fake.Length - 2] ^= 1;
+                Ok(Throws(() => ch.Open(fake, Transport.IsMarker), "changed"), "fallback: a forged marker is refused");
+                Ok(Transport.IsMarker(ch.Open(mk, Transport.IsMarker)) && System.Text.Encoding.UTF8.GetString(ch.Open(m6)) == "after", "fallback: the authentic marker is accepted after lost messages, then the order is strict again");
+                Ok(Throws(() => ch.Open(m4, Transport.IsMarker), "replayed"), "fallback: an older message is never accepted afterwards");
+            }
+
+            // Wake-on-LAN
+            var mac = Wol.ParseMac("3c:7c:3f:1a:2b:4d");
+            Ok(mac != null && Wol.NormMac("3C-7C-3F-1A-2B-4D") == "3C7C3F1A2B4D" && Wol.ShowMac("3c7c3f1a2b4d") == "3C:7C:3F:1A:2B:4D" && Wol.ParseMac("000000000000") == null && Wol.ParseMac("01005E000001") == null && Wol.ParseMac("3c7c3f1a2b") == null && Wol.ParseMac("zz7c3f1a2b4d") == null && Wol.ParseMac(null) == null,
+                "Wake-on-LAN: MAC addresses are read in any usual form; zero, multicast and junk are refused");
+            var pkt = Wol.Packet(mac);
+            Ok(pkt.Length == 102 && pkt.Take(6).All(x => x == 0xFF) && Enumerable.Range(0, 16).All(i => pkt.Skip(6 + i * 6).Take(6).SequenceEqual(mac)), "Wake-on-LAN: the magic packet is 6 x FF, then the MAC 16 times (102 bytes)");
+            using (var u1 = new System.Net.Sockets.UdpClient(new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, 0))) using (var u2 = new System.Net.Sockets.UdpClient(new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, 0)))
+            {
+                u1.Client.ReceiveTimeout = 2000; u2.Client.ReceiveTimeout = 2000;
+                int sent = Wol.Send("3C:7C:3F:1A:2B:4D", new[] { (System.Net.IPEndPoint)u1.Client.LocalEndPoint, (System.Net.IPEndPoint)u2.Client.LocalEndPoint });
+                System.Net.IPEndPoint from = null; byte[] g1 = null, g2 = null; try { g1 = u1.Receive(ref from); g2 = u2.Receive(ref from); } catch { }
+                Ok(sent == 2 && g1 != null && g1.SequenceEqual(pkt) && g2 != null && g2.SequenceEqual(pkt), "Wake-on-LAN: a local UDP listener receives exactly the magic packet");
+            }
+            Ok(Wol.Send("junk", new[] { new System.Net.IPEndPoint(System.Net.IPAddress.Loopback, 9) }) == 0, "Wake-on-LAN: nothing is sent without a usable MAC");
+            var targets = Wol.Targets();
+            Ok(targets.Any(x => x.Address.Equals(System.Net.IPAddress.Broadcast) && x.Port == 7) && targets.Any(x => x.Address.Equals(System.Net.IPAddress.Broadcast) && x.Port == 9) && targets.All(x => x.Port == 7 || x.Port == 9), "Wake-on-LAN: broadcast on ports 7 and 9 (computed only, nothing sent)");
+            var withMac = AssistSettings.CleanPcs(new List<SavedPc> { new SavedPc { Name = "A", Code = "715390246", Mac = "3c-7c-3f-1a-2b-4d" }, new SavedPc { Name = "B", Code = "302118457", Mac = "nonsense" } });
+            Ok(withMac[0].Mac == "3C7C3F1A2B4D" && withMac[1].Mac == null, "Your PCs: a learned network adapter is kept (tidied); junk is dropped");
+            var mymac = DirectNet.PrimaryMac(); Ok(mymac == null || Wol.ParseMac(mymac) != null, "Wake-on-LAN: this PC's primary adapter MAC is usable or unknown (" + (mymac == null ? "none" : "found") + ")");
+
+            // sound: IMA ADPCM, the packet, the down-sampler
+            var tone = new short[AudioMsg.ChunkSamples * 3]; for (int i = 0; i < tone.Length; i++) tone[i] = (short)(Math.Sin(2 * Math.PI * 440 * i / 16000.0) * 12000);
+            var st = new int[2]; var pk = new List<byte[]>();
+            for (int c = 0; c < 3; c++) { var part = tone.Skip(c * AudioMsg.ChunkSamples).Take(AudioMsg.ChunkSamples).ToArray(); pk.Add(AudioMsg.FromPcm(part, part.Length, st).Encode()); }
+            var dec = pk.SelectMany(b => AudioMsg.Parse(b).ToPcm()).ToArray();
+            double sig = 0, err = 0; for (int i = 200; i < tone.Length; i++) { sig += (double)tone[i] * tone[i]; err += (double)(tone[i] - dec[i]) * (tone[i] - dec[i]); }
+            var snr = 10 * Math.Log10(sig / Math.Max(1, err));
+            Ok(pk.All(b => b.Length == 8 + AudioMsg.ChunkSamples / 2) && snr > 20, "sound: IMA ADPCM, 40 ms packets of 328 bytes (64 kbit/s), each decodes on its own (SNR " + snr.ToString("0.0") + " dB)");
+            Ok(Throws2(() => AudioMsg.Parse(new byte[] { Msg.Audio, 0x3e, 0x80, 0, 0, 99, 0, 10, 0, 0, 0, 0, 0 })) && Throws2(() => AudioMsg.Parse(pk[0].Take(50).ToArray())) && Throws2(() => AudioMsg.Parse(new byte[] { Msg.Json, 1, 2, 3, 4, 5, 6, 7 })), "sound: bad or cut-short packets are refused");
+            foreach (var rate in new[] { 48000, 44100 })
+            {
+                var outp = new List<short>(); var ds = new Downsampler(rate, chunk => outp.AddRange(chunk));
+                for (int i = 0; i < rate; i++) ds.Add((float)(Math.Sin(2 * Math.PI * 1000 * i / rate) * 0.5));
+                long cross = 0; for (int i = 1; i < outp.Count; i++) if ((outp[i] >= 0) != (outp[i - 1] >= 0)) cross++;
+                var hz = cross / 2.0 * 16000 / Math.Max(1, outp.Count);
+                Ok(Math.Abs(outp.Count - 16000) <= AudioMsg.ChunkSamples && Math.Abs(hz - 1000) < 30 && outp.Max() > 12000, "sound: " + rate + " Hz -> 16 kHz mono keeps the pitch (" + outp.Count + " samples, " + hz.ToString("0") + " Hz)");
+            }
+            var sink = new CountingSink(); sink.Play(dec); Ok(Math.Abs(sink.Hz - 440) < 20, "sound: the test player hears 440 Hz (" + sink.Hz + ")");
+            var l1 = HelpBar.Lines("Dom", true, false, false, "4827", true, true); var l2 = HelpBar.Lines("Dom", true, false, false, "4827", true, false);
+            Ok(string.Join(" ", l1).Contains("Sound shared") && !string.Join(" ", l2).Contains("Sound shared"), "the red bar says Sound shared while sound is shared, and only then");
+        }
+
+        // v1.4: half a second of this PC's sound mix into memory (WASAPI loopback), then discarded - nothing is saved or sent
+        static int WasapiSmoke()
+        {
+            long n = 0; int peak = 0; var src = new LoopbackSource();
+            src.Start(c => { lock (src) { n += c.Length; foreach (var x in c) peak = Math.Max(peak, Math.Abs((int)x)); } });
+            System.Threading.Thread.Sleep(600); src.Stop();
+            Console.WriteLine("wasapi-smoke: format=" + src.Format + " samples16k=" + n + " peak=" + peak + (src.Error != null ? " error=" + src.Error : ""));
+            return src.Error == null && src.Format != null ? 0 : 1;
+        }
+        // v1.4: plays 300 ms of SILENCE (all zeros) through waveOut - checks the player works without making a sound
+        static int WaveOutSmoke()
+        {
+            var w = new WaveOutSink();
+            for (int i = 0; i < 8; i++) { w.Play(new short[AudioMsg.ChunkSamples]); System.Threading.Thread.Sleep(40); }
+            System.Threading.Thread.Sleep(200); w.Stop();
+            Console.WriteLine("waveout-smoke: played=" + w.Played + " dropped=" + w.Dropped + (w.Error != null ? " error=" + w.Error : ""));
+            return w.Error == null && w.Played > 0 ? 0 : 1;
+        }
+
         static int DxgiSmoke()
         {
             // one frame of the primary monitor into memory, then discarded; nothing is saved or sent
@@ -269,6 +433,16 @@ namespace HallowAssist.Tests
         {
             new System.Threading.Thread(() => { foreach (var m in q.GetConsumingEnumerable()) { if (delayMs > 0) System.Threading.Thread.Sleep(delayMs); var b = m(); lock (Out) Out.Add(b); } }) { IsBackground = true }.Start();
         }
+        public void SendSealed(Func<byte[]> make, int sizeHint) { System.Threading.Interlocked.Add(ref queued, sizeHint); q.Add(() => { var b = make(); System.Threading.Interlocked.Add(ref queued, -sizeHint); return b; }); }
+        public long Queued { get { return System.Threading.Interlocked.Read(ref queued); } }
+        public List<int> Numbers() { lock (Out) return Out.Select(b => BitConverter.ToInt32(b, 0)).ToList(); }
+    }
+    // v1.4 tests: a relay sender that can stall (nothing is sealed while Open is false)
+    public class GateSender : ISealedSender
+    {
+        readonly System.Collections.Concurrent.BlockingCollection<Func<byte[]>> q = new System.Collections.Concurrent.BlockingCollection<Func<byte[]>>();
+        long queued; public readonly List<byte[]> Out = new List<byte[]>(); public volatile bool Open;
+        public GateSender() { new System.Threading.Thread(() => { foreach (var m in q.GetConsumingEnumerable()) { while (!Open) System.Threading.Thread.Sleep(5); var b = m(); lock (Out) Out.Add(b); } }) { IsBackground = true }.Start(); }
         public void SendSealed(Func<byte[]> make, int sizeHint) { System.Threading.Interlocked.Add(ref queued, sizeHint); q.Add(() => { var b = make(); System.Threading.Interlocked.Add(ref queued, -sizeHint); return b; }); }
         public long Queued { get { return System.Threading.Interlocked.Read(ref queued); } }
         public List<int> Numbers() { lock (Out) return Out.Select(b => BitConverter.ToInt32(b, 0)).ToList(); }

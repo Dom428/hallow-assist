@@ -3,6 +3,7 @@
 //   0x02 FRAME    mon(1) srcW(2) srcH(2) encW(2) encH(2) seq(4) flags(1) count(2), then count x [x y w h (2 each) len(4) jpeg]
 //   0x03 INPUT    kind(1) ...: 1 move nx ny | 2 button b down nx ny | 3 wheel dy dx | 4 key scan down | 5 text utf-8
 //   0x04 FILE     id(4) data
+//   0x05 AUDIO    rate(2) predictor(2) index(1) count(2), IMA ADPCM 4-bit samples (v1.4, app viewer only)
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -14,7 +15,7 @@ namespace HallowAssist
     public static class Msg
     {
         public const byte VHello = 1, HHello = 2, VConfirm = 3, HConfirm = 4, HReject = 5, Ver = 1;
-        public const byte Json = 1, Frame = 2, Input = 3, File = 4;
+        public const byte Json = 1, Frame = 2, Input = 3, File = 4, Audio = 5;
         public const byte InMove = 1, InButton = 2, InWheel = 3, InKey = 4, InText = 5;
         static readonly JavaScriptSerializer js = new JavaScriptSerializer { MaxJsonLength = 4 * 1024 * 1024 };
 

@@ -19,14 +19,14 @@ using WF = System.Windows.Forms;
 [assembly: AssemblyTitle("Hallow Assist")]
 [assembly: AssemblyProduct("Hallow Assist")]
 [assembly: AssemblyDescription("Remote help for friends and family")]
-[assembly: AssemblyVersion("1.3.0.0")]
-[assembly: AssemblyFileVersion("1.3.0.0")]
+[assembly: AssemblyVersion("1.4.0.0")]
+[assembly: AssemblyFileVersion("1.4.0.0")]
 
 namespace HallowAssist
 {
     public static class Program
     {
-        public const string Version = "1.3";
+        public const string Version = "1.4";
         [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr v);
 
         [STAThread]
@@ -81,7 +81,8 @@ namespace HallowAssist
             var bar = new HelpBar(); bar.Update("Dom", true, false, false, "4827", true); Snap.Save(bar, Path.Combine(dir, "bar.png"), 860, 0);
             var bar2 = new HelpBar(); bar2.Update("Dom", false, true, false, "4827", true); Snap.Save(bar2, Path.Combine(dir, "bar-viewonly.png"), 860, 0);
             var bar3 = new HelpBar(); bar3.Update("Dom", true, false, true, "4827", true); Snap.Save(bar3, Path.Combine(dir, "bar-unattended.png"), 900, 0);
-            var vs = new ViewerSession(new Uri("wss://assist.example.com/ws"), "481207365", "K7MX2P", "Dom") { HostUnattended = true };
+            var bar4 = new HelpBar(); bar4.Update("Dom", true, false, false, "4827", true, true, true); Snap.Save(bar4, Path.Combine(dir, "bar-sound.png"), 1080, 0);
+            var vs = new ViewerSession(new Uri("wss://assist.example.com/ws"), "481207365", "K7MX2P", "Dom") { HostUnattended = true, HostSharesSound = true, HostHasSound = true, SoundOn = true };
             var vw = new ViewerWindow(vs, "481207365"); vw.SnapFill(); Snap.Save(vw, Path.Combine(dir, "viewer.png"), 1180, 760);
             var vs2 = new ViewerSession(new Uri("wss://assist.example.com/ws"), "481207365", "K7MX2P", "Dom") { Safety = "4827", State = ViewerState.Waiting, Status = "Connected securely. Waiting for them to click Allow..." };
             var vw2 = new ViewerWindow(vs2, "481207365"); vw2.Refresh(); Snap.Save(vw2, Path.Combine(dir, "viewer-waiting.png"), 1180, 560);
@@ -90,8 +91,8 @@ namespace HallowAssist
             Snap.Save(new PromptWindow("Dom wants to send you a file", "setup-notes.txt (12 KB). It goes into Downloads\\Hallow Assist.", "Accept", "Decline", ok => { }), Path.Combine(dir, "file-prompt.png"), 420, 0);
             var sd = new SavePcDialog(null, true); sd.SnapFill("Living room PC", "715 390 246"); Snap.Save(sd, Path.Combine(dir, "save-pc.png"), 480, 0);
             c.S.RelayUrl = "https://assist.example.com"; c.S.Unattended = false;
-            c.S.Pcs = AssistSettings.CleanPcs(new System.Collections.Generic.List<SavedPc> { new SavedPc { Name = "Living room PC", Code = "715390246", Key = "x", LastUsed = DateTime.Now.ToString("o") }, new SavedPc { Name = "Mum's laptop", Code = "302118457" } });
-            c.PcStatus = new Dictionary<string, string> { { "715390246", "online" }, { "302118457", "offline" } };
+            c.S.Pcs = AssistSettings.CleanPcs(new System.Collections.Generic.List<SavedPc> { new SavedPc { Name = "Living room PC", Code = "715390246", Key = "x", LastUsed = DateTime.Now.ToString("o") }, new SavedPc { Name = "Mum's laptop", Code = "302118457" }, new SavedPc { Name = "Office PC", Code = "560913284", Key = "x", Mac = "3C7C3F1A2B4D" } });
+            c.PcStatus = new Dictionary<string, string> { { "715390246", "online" }, { "302118457", "offline" }, { "560913284", "offline" } };
             main.Build(); Snap.Save(main, Path.Combine(dir, "main-yourpcs.png"), 860, 0);
             var now = DateTime.Now;
             var hist = new List<HistoryEntry> {
@@ -205,8 +206,11 @@ namespace HallowAssist
             o.Screen = AssistSettings.Fake ? new SyntheticSource() : ScreenSource.Create();
             o.Input = AssistSettings.Fake ? (IInputSink)new RecordingSink(AssistSettings.Dir) : new SendInputSink();
             o.Clip = AssistSettings.TestDir != null ? (IClip)new FileClip(Path.Combine(AssistSettings.Dir, "clipboard.txt")) : new WpfClip(ui);
+            o.Audio = AssistSettings.Fake ? (IAudioSource)new ToneSource() : new LoopbackSource();   // v1.4: only used while Share sound is on
+            o.SoundUnattended = S.SoundUnattended;
             var h = new HostSession(o);
             host = h;
+            h.Detail += t => ui.BeginInvoke(new Action(() => Log(t)));
             h.Changed += () => ui.BeginInvoke(new Action(() => HostChanged(h)));
             h.ConsentNeeded += (name, safety, answer) => ui.BeginInvoke(new Action(() => AskConsent(h, name, safety, answer)));
             h.Chat += t => ui.BeginInvoke(new Action(() => { Log("chat from helper: " + t); if (AssistSettings.Headless) return; OpenHostChat(h); hostChat.Add(h.HelperName, t, false); }));
@@ -251,10 +255,11 @@ namespace HallowAssist
                         bar.Disconnect = () => StopHost("You disconnected.");
                         bar.ToggleControl = () => h.SetControl(!h.Control);
                         bar.ToggleClipboard = () => h.SetClipboard(!h.Clipboard);
+                        bar.ToggleSound = () => h.SetSound(!h.SoundShared);
                         bar.OpenChat = () => OpenHostChat(h);
                         bar.SendFile = () => { var d = new OpenFileDialog { Title = "Send a file to your helper (they're asked first)" }; if (d.ShowDialog() == true) { var e = h.SendFile(d.FileName); if (e != null && main != null) main.Say(e, Ui.Amber); } };
                     }
-                    bar.Update(h.HelperName, h.Control, h.Clipboard, h.Unattended, h.Safety, hotkeyOk);
+                    bar.Update(h.HelperName, h.Control, h.Clipboard, h.Unattended, h.Safety, hotkeyOk, h.SoundShared, h.SoundAvailable);
                     if (!bar.IsVisible) bar.Show();
                 }
                 barVisible = true;
@@ -393,12 +398,13 @@ namespace HallowAssist
             StartViewer(new ViewerSession(uri, pc.Code, key, name), pc.Code);
             return true;
         }
-        public void SavePc(string name, string code, byte[] key)
+        public void SavePc(string name, string code, byte[] key, string mac = null)
         {
             code = Kdf.NormCode(code); if (code.Length != 9) return;
             var pc = S.FindPc(code);
             if (pc == null) { if (S.Pcs.Count >= AssistSettings.MaxPcs) return; pc = new SavedPc { Code = code }; S.Pcs.Add(pc); }
             pc.Name = name; pc.Key = key == null ? null : AssistSettings.ProtectPcKey(key);
+            if (mac != null) pc.Mac = mac;
             S.Pcs = AssistSettings.CleanPcs(S.Pcs); S.Save();
             if (main != null) main.RefreshHelpSomeone();
             RefreshPcStatus();
@@ -487,6 +493,60 @@ namespace HallowAssist
         public bool WaitingForRestart { get { return restartWait != null; } }
         public void CancelRestartWait() { restartWait = null; if (main != null) main.Say("Stopped waiting."); }
 
+        // ---------------- v1.4: Wake-on-LAN for Your PCs - magic packets on this network, then wait for its online dot
+        class WakeWait { public string Code, Name; public DateTime Since; }
+        WakeWait wakeWait; DispatcherTimer wakeTimer; public string WakeState = "";
+        public bool Waking(string code) { var w = wakeWait; return w != null && w.Code == Kdf.NormCode(code); }
+        public void Wake(SavedPc pc)
+        {
+            if (pc == null || Wol.ParseMac(pc.Mac) == null) return;
+            var targets = Wol.Targets(); var mac = pc.Mac; var label = pc.Name;
+            new Thread(() =>
+            {
+                int sent = 0; try { sent = Wol.Send(mac, targets); } catch { }
+                ui.BeginInvoke(new Action(() =>
+                {
+                    Log("wake: " + sent + " packets for " + label);
+                    if (sent == 0) { WakeState = "failed"; if (main != null) main.Say("Couldn't send the wake-up from this PC (no network?).", Ui.Amber); return; }
+                    WakeState = "sent";
+                    wakeWait = new WakeWait { Code = pc.Code, Name = label, Since = DateTime.Now };
+                    if (main != null) { main.Say("Sent a wake-up to " + label + ". Waiting for it to come online (up to 2 minutes)... This only works on the same network, with Wake-on-LAN turned on in its BIOS and network adapter."); main.RefreshHelpSomeone(); }
+                    if (wakeTimer == null) { wakeTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(AssistSettings.TestDir != null ? 1 : 5) }; wakeTimer.Tick += (s, e) => CheckWake(); }
+                    wakeTimer.Start(); CheckWake();
+                }));
+            }) { IsBackground = true, Name = "wake" }.Start();
+        }
+        bool wakeBusy;
+        void CheckWake()
+        {
+            var w = wakeWait; if (w == null) { if (wakeTimer != null) wakeTimer.Stop(); return; }
+            if ((DateTime.Now - w.Since).TotalMinutes > 2)
+            {
+                wakeWait = null; WakeState = "timeout"; if (wakeTimer != null) wakeTimer.Stop();
+                if (main != null) { main.Say(w.Name + " didn't come online within 2 minutes. Wake-on-LAN only works on the same network, with it turned on in the BIOS and the network adapter's settings - and Hallow Assist has to start with Windows there.", Ui.Amber); main.RefreshHelpSomeone(); }
+                return;
+            }
+            var uri = AssistSettings.WsUri(S.RelayUrl); if (uri == null || wakeBusy) return;
+            wakeBusy = true;
+            new Thread(() =>
+            {
+                var r = RelayStatus.Query(uri, new[] { w.Code });
+                ui.BeginInvoke(new Action(() =>
+                {
+                    wakeBusy = false;
+                    string st = null; if (r != null) r.TryGetValue(w.Code, out st);
+                    if (wakeWait != w || st == null) return;
+                    PcStatus[w.Code] = st; if (main != null) main.ShowPcStatus();
+                    if (st == "online" || st == "busy")
+                    {
+                        wakeWait = null; WakeState = "online"; if (wakeTimer != null) wakeTimer.Stop();
+                        if (main != null) { main.Say(w.Name + " is awake and online.", Ui.Green); main.RefreshHelpSomeone(); }
+                    }
+                }));
+            }) { IsBackground = true, Name = "wake wait" }.Start();
+        }
+        public void CancelWake() { wakeWait = null; WakeState = ""; if (wakeTimer != null) wakeTimer.Stop(); if (main != null) main.RefreshHelpSomeone(); }
+
         // ---------------- v1.2: online dots for Your PCs (only while the main window is open)
         public void RefreshPcStatus()
         {
@@ -505,6 +565,8 @@ namespace HallowAssist
         {
             v.Clip = AssistSettings.TestDir != null ? (IClip)new FileClip(Path.Combine(AssistSettings.Dir, "clipboard.txt")) : new WpfClip(ui);
             v.AllowDirect = !S.DirectOff;
+            v.Player = AssistSettings.TestDir != null ? (IAudioSink)new CountingSink() : new WaveOutSink();   // tests never make a sound
+            v.Detail += t => Log(t);
             Viewer = v;
             v.Changed += () => ui.BeginInvoke(new Action(() => { if (main != null) main.RefreshHelpSomeone(); WriteStatus(); UpdateTrayText(); }));
             v.Chat += t => Log("chat from host: " + t);
@@ -514,6 +576,8 @@ namespace HallowAssist
             {
                 var pc = S.FindPc(v.Code);   // v1.1: Your PCs remember when they were last reached
                 if (pc != null && v.State == ViewerState.Connected && (DateTime.Now - Parse(pc.LastUsed)).TotalMinutes > 1) { pc.LastUsed = DateTime.Now.ToString("o"); S.Save(); }
+                // v1.4: one of Your PCs told us its network adapter - kept for Wake-on-LAN
+                if (pc != null && v.HostUnattended && v.HostMac != null && pc.Mac != v.HostMac) { pc.Mac = v.HostMac; S.Save(); Log("learned the network adapter of " + pc.Name); if (main != null) main.RefreshHelpSomeone(); }
             }));
             v.Ended += r => ui.BeginInvoke(new Action(() =>
             {
@@ -664,11 +728,15 @@ namespace HallowAssist
         {
             var t = new Dictionary<string, object>();
             var h = host;
-            if (h != null) { t["host"] = h.State.ToString(); t["helper"] = h.HelperName; t["control"] = h.Control; t["clipboard"] = h.Clipboard; t["safety"] = h.Safety; t["framesSent"] = h.FramesSent; t["wrong"] = h.WrongPasswords; t["endReason"] = h.EndReason; t["unattendedHost"] = h.Unattended; t["inputEvents"] = h.InputEvents; t["screen"] = h.ScreenKind; t["direct"] = h.Direct; t["drawStrokes"] = DrawStrokes; }
+            if (h != null) { t["host"] = h.State.ToString(); t["helper"] = h.HelperName; t["control"] = h.Control; t["clipboard"] = h.Clipboard; t["safety"] = h.Safety; t["framesSent"] = h.FramesSent; t["wrong"] = h.WrongPasswords; t["endReason"] = h.EndReason; t["unattendedHost"] = h.Unattended; t["inputEvents"] = h.InputEvents; t["screen"] = h.ScreenKind; t["direct"] = h.Direct; t["drawStrokes"] = DrawStrokes; t["soundShared"] = h.SoundShared; t["soundFlowing"] = h.SoundFlowing; t["audioSent"] = h.AudioPackets; }
+            t["barText"] = h != null && h.State == HostState.Connected ? string.Join(" | ", HelpBar.Lines(h.HelperName, h.Control, h.Clipboard, h.Unattended, h.Safety, hotkeyOk, h.SoundShared)) : null; t["wake"] = WakeState;
+            t["pcs"] = S.Pcs.Select(p => new Dictionary<string, object> { { "code", p.Code }, { "name", p.Name }, { "mac", p.Mac } }).ToArray();
             t["consentPending"] = pendingConsent != null; t["bar"] = barVisible; t["hotkey"] = hotkeyRegistered; t["panics"] = Panics; t["startsWithWindows"] = StartsWithWindows();
             lock (pendingFiles) t["filesPending"] = pendingFiles.Count;
             var v = Viewer;
-            if (v != null) { t["viewer"] = v.State.ToString(); t["viewerSafety"] = v.Safety; t["frames"] = v.Frames; t["controlAllowed"] = v.ControlAllowed; t["clipboardAllowed"] = v.ClipboardAllowed; t["banner"] = v.Banner; t["viewerEnd"] = v.EndReason; t["monitors"] = v.Monitors.Length; t["monitor"] = v.Monitor; t["lastClip"] = v.LastClipFromThem; t["screenW"] = v.Screen.W; t["screenH"] = v.Screen.H; t["viewerDirect"] = v.Direct; }
+            if (v != null) { t["viewer"] = v.State.ToString(); t["viewerSafety"] = v.Safety; t["frames"] = v.Frames; t["controlAllowed"] = v.ControlAllowed; t["clipboardAllowed"] = v.ClipboardAllowed; t["banner"] = v.Banner; t["viewerEnd"] = v.EndReason; t["monitors"] = v.Monitors.Length; t["monitor"] = v.Monitor; t["lastClip"] = v.LastClipFromThem; t["screenW"] = v.Screen.W; t["screenH"] = v.Screen.H; t["viewerDirect"] = v.Direct;
+                t["viewerSound"] = v.SoundOn; t["hostSharesSound"] = v.HostSharesSound; t["audioPackets"] = v.AudioPackets; t["hostMac"] = v.HostMac; t["pathNote"] = v.PathNote;
+                var cs = v.Player as CountingSink; if (cs != null) { t["audioSamples"] = cs.Samples; t["audioHz"] = cs.Hz; } }
             lock (log) t["log"] = log.ToArray();
             return t;
         }
@@ -759,6 +827,14 @@ namespace HallowAssist
                 case "test-unattended-off": SetUnattended(false); return "ok";
                 case "test-close": Quit(); return "ok";
                 case "test-host-end": if (host != null) host.End("test", false); return "ok";
+                // v1.4
+                case "test-host-sound": if (host == null) return "error no session"; host.SetSound(a.Length > 0 && a[0] == "on"); return "ok";
+                case "test-sound-unattended": S.SoundUnattended = a.Length > 0 && a[0] == "on"; S.Save(); return "ok";
+                case "test-view-sound": Viewer.SetSound(a.Length > 0 && a[0] == "on"); return "ok";
+                case "test-view-cut-direct": Viewer.CutDirect("test: the direct link was cut"); return "ok";
+                case "test-host-cut-direct": if (host == null) return "error no session"; host.CutDirect("test: the direct link was cut"); return "ok";
+                case "test-savepc": if (a.Length < 2) return "error test-savepc <code> <name>"; SavePc(string.Join(" ", a.Skip(1)), a[0], null); return "ok";
+                case "test-wake": { var pc = S.FindPc(arg); if (pc == null) return "error no such PC"; if (Wol.ParseMac(pc.Mac) == null) return "error no MAC yet"; WakeState = "sending"; Wake(pc); return "ok"; }
             }
             return "error unknown test command";
         }

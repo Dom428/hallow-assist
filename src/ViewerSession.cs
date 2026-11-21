@@ -32,6 +32,12 @@ namespace HallowAssist
         public event Action<string> Chat;
         public event Action<string> Note;
         public event Action<string> Ended;
+        public event Action<string> Detail;   // v1.4: connection details (the log and the stats tooltip), not a status line
+        public string PathNote = "";
+        void Tell(string s) { PathNote = s; var h = Detail; if (h != null) try { h(s); } catch { } }
+        // v1.4: Wake-on-LAN (one of your own PCs told us its network adapter) and session sound
+        public string HostMac;
+        public bool HostSharesSound, HostHasSound; public volatile bool SoundOn; public IAudioSink Player; public long AudioPackets;
 
         // v1.1: one of Your PCs with its remembered key (the password itself is never kept)
         public ViewerSession(Uri relay, string code, byte[] passwordKey, string name) : this(relay, code, (string)null, name) { presetKey = passwordKey; }
@@ -128,7 +134,7 @@ namespace HallowAssist
 
         // ---- v1.3: direct connection on the same network. This side listens (the helper's PC may ask once whether Hallow
         // Assist may use private networks); their PC connects out and proves itself with the token sent in the sealed channel.
-        Transport tx; DirectLink direct; int directOffered;
+        Transport tx; DirectLink direct; int directOffered; bool peerFellBack;
         public bool AllowDirect = true;
         public bool Direct { get { var t = tx; return t != null && t.IsDirect; } }
         void OfferDirect()
@@ -142,20 +148,31 @@ namespace HallowAssist
                     if (l.Endpoints.Count == 0) return;   // not on a home network: the relay it is
                     SendJson("t", "direct-offer", "addrs", l.Endpoints.ToArray(), "token", Convert.ToBase64String(l.Token));
                     var d = l.Accept(12000);
-                    if (d == null) { Say("Their PC couldn't reach this one directly - staying on the relay."); return; }
+                    if (d == null) { Tell("Their PC couldn't reach this one directly (another network, or a firewall) - staying on the relay."); return; }
                     if (State != ViewerState.Connected) { d.Close("too late"); return; }
                     d.Frame += t.OnDirectFrame;
                     d.Closed += r => { if (direct == d) DirectFailed(r); };
                     direct = d; d.Start();
-                    if (t.SwitchTo(d, () => c.Seal(Msg.JsonMsg("t", "switch")))) { Say("Connected directly over your network."); Fire(); }
-                    else { direct = null; d.Close("switch didn't happen"); }
+                    if (t.SwitchTo(d, () => c.Seal(Msg.JsonMsg("t", "switch")))) { Tell("Connected directly over your network."); Say("Connected directly over your network."); Fire(); }
+                    else { direct = null; d.Close("switch didn't happen"); Tell("The switch to a direct connection didn't finish - staying on the relay."); }
                 }
             }) { IsBackground = true, Name = "direct listen" }.Start();
         }
+        // v1.4: a direct link that drops mid-session goes back to the relay when the relay is still connected
+        public void CutDirect(string why) { var d = direct; if (d != null) d.Close(why); }   // tests: the direct link drops
         void DirectFailed(string why)
         {
             var d = direct; direct = null; if (d != null) d.Close(why);
             if (State == ViewerState.Ended) return;
+            var t = tx; var c = chan; var l = link;
+            if (t != null && t.FellBack) return;
+            if (t != null && c != null && l != null && l.IsOpen)
+            {
+                t.Fallback(() => c.Seal(Transport.MarkerPlain()));
+                Tell("The direct connection dropped (" + why + ") - back on the relay."); Say("Back on the relay - the direct connection dropped.");
+                SendJson("t", "refresh");
+                Fire(); return;
+            }
             End("The direct connection dropped (" + why + "). Connect again.", false);
         }
         void SendJson(params object[] kv) { SendPlain(Msg.JsonMsg(kv)); }
@@ -163,11 +180,12 @@ namespace HallowAssist
         void OnSealed(byte[] b)
         {
             byte[] p;
-            try { p = chan.Open(b); }
+            try { p = chan.Open(b, directOffered == 1 && !peerFellBack ? (Func<byte[], bool>)Transport.IsMarker : null); }
             catch (CryptographicException e) { End("A message failed its security check (" + e.Message + "), so the session was closed.", false); return; }
             if (p.Length == 0) return;
             if (p[0] == Msg.Frame) { OnFrame(p); return; }
             if (p[0] == Msg.File) { Files.Chunk(p); return; }
+            if (p[0] == Msg.Audio) { OnAudio(p); return; }
             if (p[0] != Msg.Json) return;
             var m = Msg.ParseJson(p);
             switch (Msg.Str(m, "t"))
@@ -175,12 +193,14 @@ namespace HallowAssist
                 case "consent":
                     if (!Msg.Bool(m, "allowed")) { End("They said no.", false); return; }
                     ControlAllowed = Msg.Bool(m, "control"); ClipboardAllowed = Msg.Bool(m, "clipboard"); HostName = Msg.Str(m, "host"); HostUnattended = Msg.Bool(m, "unattended");
+                    HostSharesSound = Msg.Bool(m, "sound"); HostHasSound = Msg.Bool(m, "soundAvailable");
                     var list = new List<MonitorInfo>();
                     object mo; if (m.TryGetValue("monitors", out mo) && mo is System.Collections.ArrayList)
                         foreach (var x in (System.Collections.ArrayList)mo) { var d = x as Dictionary<string, object>; if (d != null) list.Add(new MonitorInfo { W = (int)Msg.Num(d, "w"), H = (int)Msg.Num(d, "h"), Primary = Msg.Bool(d, "primary") }); }
                     Monitors = list.ToArray();
                     State = ViewerState.Connected; Status = "Connected."; Banner = ControlAllowed ? "" : "View only - they haven't allowed control.";
                     OfferDirect();
+                    if (SoundOn) SendJson("t", "sound-want", "on", true);
                     Fire(); break;
                 case "control": ControlAllowed = Msg.Bool(m, "on"); Banner = ControlAllowed ? "" : "They turned off control - you can still see their screen."; Fire(); break;
                 case "clipboard": ClipboardAllowed = Msg.Bool(m, "on"); lastClip = null; Fire(); break;
@@ -194,12 +214,33 @@ namespace HallowAssist
                 case "q": QualityLabel = Msg.Str(m, "label") ?? ""; Fire(); break;
                 case "bye": End(Msg.Str(m, "reason") ?? "They ended the session.", false); break;
                 case "switch": { var sx = tx; if (sx != null) sx.PeerSwitched(); break; }
+                case "relay-again": { peerFellBack = true; var sx = tx; if (sx != null) sx.PeerFellBack(); if (direct != null) DirectFailed("their PC went back to the relay"); break; }
+                // v1.4: only one of your own PCs (unattended access) sends this - kept for Wake-on-LAN
+                case "mac": if (HostUnattended) { var mac = Wol.NormMac(Msg.Str(m, "mac")); if (mac != null) { HostMac = mac; Fire(); } } break;
+                case "sound": HostSharesSound = Msg.Bool(m, "on"); if (!HostSharesSound) { var pl = Player; if (pl != null) pl.Stop(); } Fire(); break;
                 case "restarting": Restarting = true; Status = "Their PC is restarting - Hallow Assist reconnects when it's back."; Fire(); break;
                 case "note": { var t = Msg.Str(m, "text"); if (!string.IsNullOrEmpty(t)) Say(t); break; }
                 default: Files.Handle(m); break;
             }
         }
         public string LastClipFromThem;
+
+        // ---- v1.4: sound (off until you turn it on; only plays while they share it)
+        public void SetSound(bool on)
+        {
+            SoundOn = on;
+            if (!on) { var pl = Player; if (pl != null) pl.Stop(); }
+            if (State == ViewerState.Connected) SendJson("t", "sound-want", "on", on);
+            Fire();
+        }
+        void OnAudio(byte[] p)
+        {
+            if (!SoundOn || !HostSharesSound || State != ViewerState.Connected) return;
+            AudioMsg a; try { a = AudioMsg.Parse(p); } catch { return; }
+            if (a.SampleRate != AudioMsg.Rate) return;
+            AudioPackets++;
+            var pl = Player; if (pl != null) try { pl.Play(a.ToPcm()); } catch { }
+        }
 
         void OnFrame(byte[] p)
         {
@@ -242,6 +283,7 @@ namespace HallowAssist
             if (tellPeer && chan != null) SendJson("t", "bye", "reason", "The helper ended the session.");
             State = ViewerState.Ended; EndReason = reason; Status = reason;
             Files.CancelAll();
+            SoundOn = false; { var pl = Player; if (pl != null) try { pl.Stop(); } catch { } }
             var dl = direct; direct = null; if (dl != null) { dl.Drain(1500); dl.Close("session ended"); }   // "bye" first, then the relay
             if (link != null) link.Close(reason);
             if (ecdh != null) ecdh.Dispose();

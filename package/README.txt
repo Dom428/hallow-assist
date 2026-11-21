@@ -27,10 +27,19 @@ HELPING SOMEONE
 UNATTENDED ACCESS (your own PCs only)
 - Off by default. Settings > Unattended access needs its own strong password and
   Start with Windows. The red bar still shows while you're connected.
+- Sound isn't shared in unattended sessions unless you turn that on in Settings.
 
 PRIVACY
 - End-to-end encrypted: your relay passes sealed messages along and can't see screens,
   keys, chat or files. Crash reports stay on this PC. Nothing else is sent anywhere.
+
+WHAT'S NEW IN 1.4
+- Wake-on-LAN for Your PCs: after one unattended session your app knows that PC's network adapter, and
+  Wake (in Your PCs) wakes it - same network only, with Wake-on-LAN turned on in its BIOS / network adapter.
+- Session sound, off on both sides: the helper turns on Sound, you click Share sound on the red bar
+  (it then says "Sound shared"). Only your speakers' sound, never the microphone. App viewer only.
+- Direct connection fixes: only switches after the helper's app proves itself, prefers your real home
+  network over virtual adapters, and a dropped direct connection carries on through the relay.
 
 WHAT'S NEW IN 1.3
 - Direct connection on the same network: faster and smoother, same encryption. The helper's PC

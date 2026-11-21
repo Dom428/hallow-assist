@@ -52,6 +52,22 @@ end-to-end encrypted.
 
 ## What's new
 
+- **1.4** - **Wake-on-LAN for Your PCs**: when you connect to one of your own PCs (unattended access), it tells your app its
+  network adapter (inside the encrypted session, and only in unattended sessions). Then **Wake** next to it in Your PCs
+  sends the standard "magic packet" across your network and waits for its online dot to turn green. It only works on the
+  same network as that PC, with Wake-on-LAN turned on in its BIOS and its network adapter's settings. **Session sound**
+  (optional, off on both sides): the helper turns on **Sound** in the viewer, the person being helped clicks **Share
+  sound** on the red bar (which then says "Sound shared") - only then does the PC's sound (what its speakers play, never
+  the microphone) go to the helper, end-to-end encrypted like everything else (16 kHz, IMA ADPCM - about 64 kbit/s). Your
+  own PCs can share it in unattended sessions if you turn that on in Settings. App viewer only for now (not the browser).
+  **Direct connection fixes** from a review of 1.3: the PC being helped only switches to a direct connection after the
+  helper's app has proved it holds this session's one-time token (a different device that happens to answer on that
+  address - another network using the same private addresses - is never used); the real home-network address is offered
+  first (virtual adapters from Hyper-V, WSL, Docker, VirtualBox or VPNs no longer crowd it out); only addresses on the
+  PC's own subnets and ports from 1024 are tried; a hand-over that can't finish stays on the relay instead of risking the
+  message order; and if the direct connection drops mid-session, the session carries on through the relay instead of
+  ending. "Couldn't connect directly" is no longer shown for every session across networks - it's in the connection
+  details (hover the stats in the viewer).
 - **1.3** - **Direct connection** when both PCs are on the same network: after the usual secure start through your relay,
   the picture, input, chat, files and drawing go straight between the two PCs - faster and smoother. The PC being helped
   connects *out* to the helper's PC (so it never shows a firewall question; the helper's PC may ask once to allow
@@ -102,4 +118,4 @@ this PC, and updates from GitHub releases (asks first, checks the SHA-256).
 ## Not yet
 
 See [ROADMAP.md](ROADMAP.md): helping Android phones and TVs, iPhone viewing, an admin service for UAC prompts, H.264,
-sound, several helpers at once, remembering the people you help (Your PCs covers your own PCs).
+sound in the browser viewer, several helpers at once, remembering the people you help (Your PCs covers your own PCs).
