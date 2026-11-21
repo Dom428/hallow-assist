@@ -57,6 +57,12 @@ end-to-end encrypted.
 
 ## What's new
 
+- **1.11** - **Light and dark mode**: Hallow Assist follows the family switch in Hallow Toolkit (**Light / Dark / Same as
+  Windows**, kept in `%APPDATA%\Hallow\theme.json` - Assist only reads it). Settings > **Look** can override it for Assist:
+  **Follow Hallow** (the default), **Light** or **Dark**. Changes apply at once to every open window, no restart; with
+  *Same as Windows* it follows Windows' light / dark app setting while it runs. The title bars match. In light mode the
+  accent is darkened where it is text so it stays readable; buttons keep the real accent. The red bar that shows while
+  someone can see your screen **stays dark red in both modes**, so it's always easy to spot.
 - **1.10** - **Your PCs on your phone**: Hallow Remote and Hallow Hub can show which of **Your PCs** are online. Hallow
   Assist's `status.json` (and its `status` pipe reply) now lists each saved PC's **name** and **online state** - waiting
   for you, busy, offline or unknown - with when it was checked. Never a code, password, key, network adapter or address.
@@ -166,7 +172,7 @@ session), `HallowAssist.exe --cmd "<line>"`, `%APPDATA%\HallowAssist\status.json
 `"pcs":[{"name":"Living room PC","online":"waiting","checked":"2026-11-21T09:30:05"}]` - each saved PC's name, its online
 state `waiting` / `busy` / `offline` / `unknown`, and when that was checked (local time, `null` = not yet; refreshed every
 2 minutes while Hallow Assist runs with a relay set)), the one Hallow icon (Hallow Hub hosts the tray menu), the Hallow
-accent from Hallow Toolkit, crash reports kept on this PC, and updates from GitHub releases (asks first, checks the SHA-256).
+accent and (since 1.11) light / dark mode from Hallow Toolkit, crash reports kept on this PC, and updates from GitHub releases (asks first, checks the SHA-256).
 
 ## Building
 

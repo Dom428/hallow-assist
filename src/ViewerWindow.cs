@@ -83,7 +83,7 @@ namespace HallowAssist
             var end = Ui.Btn("Disconnect", () => v.End("You ended the session.", true), true); end.Margin = new Thickness(0, 0, 6, 4);
             bar.Children.Add(end);
             DockPanel.SetDock(bar, Dock.Top); dp.Children.Add(bar);
-            banner = new TextBlock { Background = Ui.B("#3A2E14"), Foreground = Ui.Amber, Padding = new Thickness(12, 6, 12, 6), TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
+            banner = new TextBlock { Background = Ui.L("#3A2E14"), Foreground = Ui.Amber, Padding = new Thickness(12, 6, 12, 6), TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
             DockPanel.SetDock(banner, Dock.Top); dp.Children.Add(banner);
             var foot = new DockPanel { Margin = new Thickness(10, 4, 10, 6) };
             stats = Ui.Muted("", 11.5); DockPanel.SetDock(stats, Dock.Right); foot.Children.Add(stats);
@@ -104,7 +104,7 @@ namespace HallowAssist
             wp.Children.Add(Ui.Muted("Everything is end-to-end encrypted - your relay only passes sealed messages along.", 12));
             waitPanel = new Border { Child = wp, Background = Ui.R("Panel"), CornerRadius = new CornerRadius(14), Padding = new Thickness(22), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
             grid.Children.Add(waitPanel);
-            stage = new Border { Background = Ui.B("#0C0A10"), Child = grid, Focusable = true };
+            stage = new Border { Background = Ui.L("#0C0A10"), Child = grid, Focusable = true };
             dp.Children.Add(stage);
             Content = dp;
 

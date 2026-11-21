@@ -24,6 +24,10 @@ HELPING SOMEONE
   files, files both ways (they're asked first), picture quality, recording on your PC.
 - Ctrl+Alt+Del and admin (UAC) prompts can't be used remotely: they click those themselves.
 
+LIGHT AND DARK (new in 1.11)
+- Follows the Light / Dark / Same as Windows switch in Hallow Toolkit. Settings > Look
+  can override it for Hallow Assist. The red bar stays red in both modes.
+
 UNATTENDED ACCESS (your own PCs only)
 - Off by default. Settings > Unattended access needs its own strong password and
   Start with Windows. The red bar still shows while you're connected.

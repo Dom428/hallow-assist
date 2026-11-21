@@ -66,11 +66,18 @@ namespace HallowAssist
     public class HelpBar : Window
     {
         [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
-        readonly TextBlock text, sub; readonly Button controlBtn, clipBtn, soundBtn, copiedBtn, recBtn; readonly Border recTag;
+        TextBlock text, sub; Button controlBtn, clipBtn, soundBtn, copiedBtn, recBtn; Border recTag;   // set in Build()
         public Action Disconnect, ToggleControl, ToggleClipboard, OpenChat, SendFile, ToggleSound, SendCopied, StopRecording;
         bool allowClose; DispatcherTimer topTimer;
         string flash; DispatcherTimer flashTimer; string[] lines;   // v1.7: a short message in place of the first line ("Files copied by Dom")
+        readonly Brush amber;   // v1.11: the bar stays dark red in light mode too, so its colours are the dark ones
         public HelpBar()
+        {
+            Ui.Dark = true;
+            try { Build(); amber = Ui.Amber; if (Look.Light) Resources.MergedDictionaries.Add(Program.ThemeDict(false)); }
+            finally { Ui.Dark = false; }
+        }
+        void Build()
         {
             Ui.Dress(this, "Hallow Assist - someone can see your screen", 0);
             Width = double.NaN; SizeToContent = SizeToContent.WidthAndHeight; WindowStyle = WindowStyle.None; ResizeMode = ResizeMode.NoResize; Topmost = true; ShowInTaskbar = true; ShowActivated = false;
@@ -132,7 +139,7 @@ namespace HallowAssist
             clipBtn.Content = clipboard ? "Stop clipboard" : "Share clipboard";
             soundBtn.Content = sound ? "Stop sound" : "Share sound"; soundBtn.Visibility = soundAvailable ? Visibility.Visible : Visibility.Collapsed;
         }
-        void ShowLines() { if (lines == null) return; text.Text = flash ?? lines[0]; if (flash != null) text.Foreground = Ui.Amber; else text.ClearValue(TextBlock.ForegroundProperty); sub.Text = lines[1]; }
+        void ShowLines() { if (lines == null) return; text.Text = flash ?? lines[0]; if (flash != null) text.Foreground = amber; else text.ClearValue(TextBlock.ForegroundProperty); sub.Text = lines[1]; }
         // v1.7: shows a message on the bar for a few seconds, then the usual line again
         public void Flash(string message, int seconds)
         {

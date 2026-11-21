@@ -56,6 +56,7 @@ namespace HallowAssist
         [DataMember] public bool SoundUnattended;   // v1.4: unattended sessions start with Share sound on (off by default)
         [DataMember] public string ReceiveFolder;   // v1.5: where received files go (empty = Downloads\Hallow Assist)
         [DataMember] public bool ClipRemoteOff;     // v1.9: unattended sessions don't let the helper turn clipboard sharing on (off by default = they do)
+        [DataMember(Name = "Look")] public string AppLook;   // v1.11: "hallow" (follow Hallow, the default) / "light" / "dark"
         [DataMember] public bool AskOwnFiles;       // v1.7: unattended sessions ask before copied files leave this PC (off by default: they're allowed and logged)
 
         public static AssistSettings Load()
@@ -75,6 +76,7 @@ namespace HallowAssist
         void Fix()
         {
             if (RelayUrl == null) RelayUrl = ""; if (Name == null) Name = "";
+            AppLook = HallowAssist.Look.NormApp(AppLook);
             if (Quality != "auto" && Quality != "best" && Quality != "balanced" && Quality != "fast") Quality = "auto";
             var r = Env("HALLOW_ASSIST_RELAY"); if (TestDir != null && r != null) RelayUrl = r;
             // unattended needs all of its parts; anything missing = off

@@ -206,7 +206,7 @@ namespace HallowAssist
                 seg = new PolyLineSegment();
                 var fig = new PathFigure { StartPoint = new Point(pts[0], pts[1]), IsFilled = false }; fig.Segments.Add(seg);
                 var geo = new PathGeometry { Transform = scale }; geo.Figures.Add(fig);
-                line = new System.Windows.Shapes.Path { Data = geo, Stroke = Ui.Accent, StrokeThickness = 5, StrokeLineJoin = PenLineJoin.Round, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round, IsHitTestVisible = false };
+                line = new System.Windows.Shapes.Path { Data = geo, Stroke = Ui.AccentFill, StrokeThickness = 5, StrokeLineJoin = PenLineJoin.Round, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round, IsHitTestVisible = false };
                 line.Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 6, ShadowDepth = 0, Opacity = 0.7, Color = Colors.Black };
                 strokes[id] = line; segs[id] = seg; canvas.Children.Add(line);
             }

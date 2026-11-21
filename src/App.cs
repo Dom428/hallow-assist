@@ -19,14 +19,14 @@ using WF = System.Windows.Forms;
 [assembly: AssemblyTitle("Hallow Assist")]
 [assembly: AssemblyProduct("Hallow Assist")]
 [assembly: AssemblyDescription("Remote help for friends and family")]
-[assembly: AssemblyVersion("1.10.0.0")]
-[assembly: AssemblyFileVersion("1.10.0.0")]
+[assembly: AssemblyVersion("1.11.0.0")]
+[assembly: AssemblyFileVersion("1.11.0.0")]
 
 namespace HallowAssist
 {
     public static class Program
     {
-        public const string Version = "1.10";
+        public const string Version = "1.11";
         [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr v);
 
         [STAThread]
@@ -39,8 +39,11 @@ namespace HallowAssist
             if (si >= 0 && si + 1 < args.Length)
             {
                 Snap.On = true; AssistSettings.Frozen = true;
-                var sa = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown }; LoadTheme(sa);
-                SnapAll(args[si + 1]); return;
+                var sa = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown }; SnapForce = true;
+                // v1.11: every window in both modes - dark in <folder>, light in <folder>\light
+                Look.Light = false; LoadTheme(sa); SnapAll(args[si + 1]);
+                Look.Light = true; LoadTheme(sa); SnapAll(Path.Combine(args[si + 1], "light"));
+                SnapLive(sa, Path.Combine(args[si + 1], "live")); return;
             }
             var leaf = AssistSettings.TestDir != null ? "Test" + Path.GetFileName(AssistSettings.TestDir.TrimEnd('\\')) : "";
             bool created;
@@ -58,13 +61,34 @@ namespace HallowAssist
         public static string AccentHex = Accent.Default;
         public static void LoadTheme(Application app)
         {
-            string xaml;
-            using (var s = Assembly.GetExecutingAssembly().GetManifestResourceStream("HallowAssist.Theme.xaml")) using (var r = new StreamReader(s)) xaml = r.ReadToEnd();
-            AccentHex = Accent.Current(AssistSettings.Load().UseHallowAccent);
+            var st = AssistSettings.Load();
+            AccentHex = Accent.Current(st.UseHallowAccent);
+            if (!SnapForce) Look.Light = Look.Current(st.AppLook);   // v1.11
             app.Resources.MergedDictionaries.Clear();
-            app.Resources.MergedDictionaries.Add((ResourceDictionary)XamlReader.Parse(Accent.ApplyTo(xaml, AccentHex)));
+            app.Resources.MergedDictionaries.Add(ThemeDict(Look.Light));
+        }
+        public static bool SnapForce;   // --snap picks the mode itself
+        static string themeXaml;
+        // v1.11: the theme in the current accent, light or dark
+        public static ResourceDictionary ThemeDict(bool light)
+        {
+            if (themeXaml == null) using (var s = Assembly.GetExecutingAssembly().GetManifestResourceStream("HallowAssist.Theme.xaml")) using (var r = new StreamReader(s)) themeXaml = r.ReadToEnd();
+            return (ResourceDictionary)XamlReader.Parse(Look.BuildXaml(themeXaml, AccentHex, light));
         }
 
+        // v1.11 --snap: windows opened dark, then switched to light in place (the live switch when theme.json / Windows changes)
+        static void SnapLive(Application app, string dir)
+        {
+            Look.Light = false; LoadTheme(app);
+            var vs = new ViewerSession(new Uri("wss://assist.example.com/ws"), "481207365", "K7MX2P", "Dom") { Safety = "4827", State = ViewerState.Waiting, Status = "Connected securely. Waiting for them to click Allow..." };
+            var vw = new ViewerWindow(vs, "481207365"); vw.Refresh();
+            var cw = new ConsentWindow("Dom", "4827", false);
+            var oldDict = app.Resources.MergedDictionaries[0]; var colors = Ui.ColorMap(false, AccentHex, true, AccentHex);
+            Look.Light = true; LoadTheme(app); var newDict = app.Resources.MergedDictionaries[0];
+            foreach (Window w in new Window[] { vw, cw }) { Ui.Retheme(w, oldDict, newDict, colors); w.Background = Ui.R("Bg"); w.Foreground = Ui.R("Text"); }
+            Snap.Save(vw, Path.Combine(dir, "viewer-waiting-dark-to-light.png"), 1180, 560);
+            Snap.Save(cw, Path.Combine(dir, "consent-dark-to-light.png"), 470, 0);
+        }
         // --snap <folder>: every window rendered off-screen with made-up data (never a real code, password or screen)
         static void SnapAll(string dir)
         {
@@ -163,7 +187,7 @@ namespace HallowAssist
             {
                 SetupTray();
                 var host2 = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) }; host2.Tick += (s, e) => CheckHost(); host2.Start(); CheckHost();
-                accentWatch = Accent.Watch(() => ui.BeginInvoke(new Action(ApplyAccent)));
+                accentWatch = Accent.Watch(() => ui.BeginInvoke(new Action(ApplyAccent))); WatchSystemLook();
                 if (AssistSettings.TestDir == null || Environment.GetEnvironmentVariable("HALLOW_ASSIST_API") != null)
                 {
                     var upd = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
@@ -794,11 +818,30 @@ namespace HallowAssist
             });
         }
         FileSystemWatcher accentWatch;
+        // theme.json changed (accent or mode), a setting changed, or Windows switched light/dark: re-theme live
         public void ApplyAccent()
         {
-            var a = Accent.Current(S.UseHallowAccent); if (a == Program.AccentHex) return;
-            Program.LoadTheme(Application.Current);
-            if (main != null) main.Build();
+            var a = Accent.Current(S.UseHallowAccent); var light = Look.Current(S.AppLook);
+            if (a == Program.AccentHex && light == Look.Light) return;
+            var app = Application.Current; var oldDict = app.Resources.MergedDictionaries.Count > 0 ? app.Resources.MergedDictionaries[0] : null;
+            var colors = Ui.ColorMap(Look.Light, Program.AccentHex, light, a);
+            Program.LoadTheme(app);
+            var newDict = app.Resources.MergedDictionaries[0];
+            foreach (Window w in app.Windows)
+            {
+                if (w is HelpBar || w is DrawOverlay) continue;   // the red bar stays dark red; the drawing layer is see-through
+                if (w == main) continue;
+                Ui.Retheme(w, oldDict, newDict, colors);
+                w.Background = Ui.R("Bg"); w.Foreground = Ui.R("Text"); Ui.TitleBar(w, !Look.Light);
+            }
+            if (main != null) { main.Background = Ui.R("Bg"); main.Foreground = Ui.R("Text"); Ui.TitleBar(main, !Look.Light); main.Build(); }
+        }
+        // v1.11: "Same as Windows" follows AppsUseLightTheme while Assist runs (checked every 3 s - just a registry read)
+        void WatchSystemLook()
+        {
+            var t = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+            t.Tick += (s, e) => { if (Look.Current(S.AppLook) != Look.Light || Accent.Current(S.UseHallowAccent) != Program.AccentHex) ApplyAccent(); };   // also when the Hallow folder appears later
+            t.Start();
         }
         GhRelease pending;
         public void CheckForUpdate(bool manual)

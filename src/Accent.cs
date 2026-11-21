@@ -34,13 +34,8 @@ namespace HallowAssist
         static int[] Rgb(string hex) { return new[] { int.Parse(hex.Substring(1, 2), NumberStyles.HexNumber), int.Parse(hex.Substring(3, 2), NumberStyles.HexNumber), int.Parse(hex.Substring(5, 2), NumberStyles.HexNumber) }; }
         // a lighter shade (for borders next to the accent)
         public static string Lighter(string hex) { var c = Rgb(hex); return "#" + string.Concat(Array.ConvertAll(c, v => ((int)(v + (255 - v) * 0.3)).ToString("X2"))); }
-        // text that reads well on the accent: dark on light colours, white on dark ones
-        public static string OnAccent(string hex)
-        {
-            var c = Rgb(hex); Func<int, double> lin = v => { var x = v / 255.0; return x <= 0.03928 ? x / 12.92 : Math.Pow((x + 0.055) / 1.055, 2.4); };
-            var l = 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]);
-            return l > 0.22 ? "#1A0E04" : "#FFFFFF";
-        }
+        // text that reads well on the accent: dark or white, whichever has the better contrast (v1.11)
+        public static string OnAccent(string hex) { return Look.Contrast("#1A0E04", hex) >= Look.Contrast("#FFFFFF", hex) ? "#1A0E04" : "#FFFFFF"; }
         // the theme's own accent colours swapped for this one
         public static string ApplyTo(string xaml, string accent)
         {

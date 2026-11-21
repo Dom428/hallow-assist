@@ -36,7 +36,7 @@ namespace HallowAssist
             sp.Children.Add(top);
             if (AssistSettings.WsUri(c.S.RelayUrl) == null)
             {
-                var warn = new Border { Background = Ui.B("#3A2E14"), CornerRadius = new CornerRadius(10), Padding = new Thickness(14, 10, 14, 10), Margin = new Thickness(0, 0, 0, 12) };
+                var warn = new Border { Background = Ui.L("#3A2E14"), CornerRadius = new CornerRadius(10), Padding = new Thickness(14, 10, 14, 10), Margin = new Thickness(0, 0, 0, 12) };
                 warn.Child = Ui.T("First, set the relay address below (Settings). Hallow Assist connects through a relay that you or your helper run - see NAS-DEPLOY.md on GitHub.", 12.5, false, Ui.Amber);
                 sp.Children.Add(warn);
             }
@@ -171,8 +171,8 @@ namespace HallowAssist
         void PaintDot(System.Windows.Shapes.Ellipse d, string code)
         {
             string st; c.PcStatus.TryGetValue(code, out st);
-            d.Fill = st == "online" ? Ui.Green : st == "busy" ? Ui.Amber : st == "offline" ? Ui.B("#5A5266") : Brushes.Transparent;
-            d.Stroke = st == null ? Ui.B("#5A5266") : null; d.StrokeThickness = 1.2;
+            d.Fill = st == "online" ? Ui.Green : st == "busy" ? Ui.Amber : st == "offline" ? Ui.L("#5A5266") : Brushes.Transparent;
+            d.Stroke = st == null ? Ui.L("#5A5266") : null; d.StrokeThickness = 1.2;
             d.ToolTip = st == "online" ? "Online - waiting for you" : st == "busy" ? "Online - someone is connected to it" : st == "offline" ? "Offline (switched off, asleep, or Hallow Assist isn't running there)" : "Not checked yet";
         }
         public void ShowPcStatus() { foreach (var kv in dots) PaintDot(kv.Value, kv.Key); }
@@ -263,6 +263,7 @@ namespace HallowAssist
             f.VerticalAlignment = VerticalAlignment.Center; Grid.SetRow(f, r); Grid.SetColumn(f, 1); g.Children.Add(f);
         }
 
+        public static readonly string[] LookChoices = { "Follow Hallow", "Light", "Dark" }, LookValues = { "hallow", "light", "dark" };
         UIElement BuildSettings()
         {
             var sp = new StackPanel();
@@ -277,6 +278,14 @@ namespace HallowAssist
             sp.Children.Add(relayStatus);
             sp.Children.Add(Ui.Switch("Use the Hallow icon (when Hallow Hub runs, Hallow Assist lives in its tray menu)", c.S.UseHallowIcon, v => { c.S.UseHallowIcon = v; c.S.Save(); c.CheckHost(); }));
             sp.Children.Add(Ui.Switch("Use the Hallow accent (the colour picked in Hallow Toolkit)", c.S.UseHallowAccent, v => { c.S.UseHallowAccent = v; c.S.Save(); c.ApplyAccent(); }));
+            // v1.11: light / dark
+            var lk = new DockPanel { Margin = new Thickness(0, 4, 0, 6) };
+            var ll = Ui.Muted("Look", 12.5); ll.Width = 110; ll.VerticalAlignment = VerticalAlignment.Center; DockPanel.SetDock(ll, Dock.Left); lk.Children.Add(ll);
+            var look = new ComboBox { Style = Ui.S("Combo"), Width = 230, HorizontalAlignment = HorizontalAlignment.Left, ToolTip = "Follow Hallow = the Light / Dark / Same as Windows choice in Hallow Toolkit" };
+            foreach (var o in LookChoices) look.Items.Add(new ComboBoxItem { Content = o });
+            look.SelectedIndex = Math.Max(0, Array.IndexOf(LookValues, c.S.AppLook));
+            look.SelectionChanged += (s, e) => { var v = LookValues[Math.Max(0, look.SelectedIndex)]; if (v == c.S.AppLook) return; c.S.AppLook = v; c.S.Save(); Dispatcher.BeginInvoke(new Action(c.ApplyAccent)); };
+            lk.Children.Add(look); sp.Children.Add(lk);
             // unattended access - off by default
             var ub = new StackPanel();
             ub.Children.Add(Ui.Switch("Unattended access to this PC - only for your own PCs (needs its own strong password and Start with Windows)", c.S.Unattended, v => c.SetUnattended(v)));
