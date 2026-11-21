@@ -19,14 +19,14 @@ using WF = System.Windows.Forms;
 [assembly: AssemblyTitle("Hallow Assist")]
 [assembly: AssemblyProduct("Hallow Assist")]
 [assembly: AssemblyDescription("Remote help for friends and family")]
-[assembly: AssemblyVersion("1.5.0.0")]
-[assembly: AssemblyFileVersion("1.5.0.0")]
+[assembly: AssemblyVersion("1.6.0.0")]
+[assembly: AssemblyFileVersion("1.6.0.0")]
 
 namespace HallowAssist
 {
     public static class Program
     {
-        public const string Version = "1.5";
+        public const string Version = "1.6";
         [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr v);
 
         [STAThread]
@@ -94,6 +94,13 @@ namespace HallowAssist
             var vw2 = new ViewerWindow(vs2, "481207365"); vw2.Refresh(); Snap.Save(vw2, Path.Combine(dir, "viewer-waiting.png"), 1180, 560);
             var vs3 = new ViewerSession(new Uri("wss://assist.example.com/ws"), "481207365", "K7MX2P", "Dom");
             var vw3 = new ViewerWindow(vs3, "481207365"); vw3.SnapFill(); vs3.Banner = "They need to click the admin prompt themselves - Windows hides it from remote help."; vw3.Refresh(); Snap.Save(vw3, Path.Combine(dir, "viewer-uac.png"), 1180, 760);
+            // v1.6: the question before copied files leave the PC
+            { var ask = new PullAsk { Names = new[] { "invoice.pdf", "photos.zip", "setup-notes.txt" }, Total = 18 * 1048576L + 12288 };
+              Snap.Save(new FileAskWindow(FilePull.Title("Dom", 3), FilePull.Text(ask), ok => { }), Path.Combine(dir, "files-ask.png"), 470, 0);
+              var one = new PullAsk { Names = new[] { "report.docx" }, Total = 245760, Skipped = "Folders aren't sent - zip them first." };
+              Snap.Save(new FileAskWindow(FilePull.Title("Dom", 1), FilePull.Text(one), ok => { }), Path.Combine(dir, "files-ask-one.png"), 470, 0);
+              var vs6 = new ViewerSession(new Uri("wss://assist.example.com/ws"), "481207365", "K7MX2P", "Dom") { ClipboardAllowed = true, HostAsksFiles = true };
+              var vw6 = new ViewerWindow(vs6, "481207365"); vw6.SnapFill(); vs6.ClipboardAllowed = true; vs6.PullWaiting = true; vs6.Status = FilePull.WaitingText; vw6.Refresh(); Snap.Save(vw6, Path.Combine(dir, "viewer-files-waiting.png"), 1180, 760); }
             Snap.Save(new PromptWindow("Dom wants to send you a file", "setup-notes.txt (12 KB). It goes into Downloads\\Hallow Assist.", "Accept", "Decline", ok => { }), Path.Combine(dir, "file-prompt.png"), 420, 0);
             var sd = new SavePcDialog(null, true); sd.SnapFill("Living room PC", "715 390 246"); Snap.Save(sd, Path.Combine(dir, "save-pc.png"), 480, 0);
             c.S.RelayUrl = "https://assist.example.com"; c.S.Unattended = false;
@@ -125,6 +132,7 @@ namespace HallowAssist
         HwndSource hotkeyWin; const int HotkeyId = 0xA551;
         // headless test mode: answers that a person would give, through the test pipe
         Action<ConsentAnswer> pendingConsent; readonly Queue<Action<bool>> pendingFiles = new Queue<Action<bool>>();
+        Action<bool> pendingFileAsk; FileAskWindow fileAsk;   // v1.6
         readonly List<string> log = new List<string>();
         // v1.2
         DrawOverlay overlay; public int DrawStrokes;
@@ -236,6 +244,17 @@ namespace HallowAssist
                 if (AssistSettings.Headless) { lock (pendingFiles) pendingFiles.Enqueue(answer); return; }
                 new PromptWindow(Transfers.BatchTitle(h.HelperName ?? "Your helper", names.Length, clip), Transfers.BatchText(names, total, h.Files.Folder, clip && h.Clipboard), "Accept", "Decline", answer).Show();
             }));
+            // v1.6: the helper wants this PC's copied files - asked first, Deny is the default, 60 s = Deny
+            h.FilesAskNeeded += (title, text, answer) => ui.BeginInvoke(new Action(() =>
+            {
+                Log("files ask: " + title);
+                if (h != host) { answer(false); return; }
+                if (AssistSettings.Headless) { pendingFileAsk = answer; WriteStatus(); return; }
+                if (fileAsk != null) fileAsk.Cancel();
+                fileAsk = new FileAskWindow(title, text, answer);
+                fileAsk.Show(); fileAsk.Activate();
+            }));
+            h.FilesAskClosed += () => ui.BeginInvoke(new Action(() => { pendingFileAsk = null; if (fileAsk != null) { var w = fileAsk; fileAsk = null; w.Cancel(); } }));
             h.Ended += r => ui.BeginInvoke(new Action(() => HostEnded(h, r)));
             // v1.2: drawing, restart, files for the history
             h.Drawing += (m, id, pts) => ui.BeginInvoke(new Action(() =>
@@ -803,11 +822,12 @@ namespace HallowAssist
             t["keys"] = KeysNote; t["askingKeys"] = keysBusy;
             t["consentPending"] = pendingConsent != null; t["bar"] = barVisible; t["hotkey"] = hotkeyRegistered; t["panics"] = Panics; t["startsWithWindows"] = StartsWithWindows();
             lock (pendingFiles) t["filesPending"] = pendingFiles.Count;
+            t["fileAskPending"] = pendingFileAsk != null; if (h != null) { t["pullPending"] = h.PullPending; t["pullsAsked"] = h.PullsAsked; t["pullsAllowed"] = h.PullsAllowed; t["hostFileOffers"] = h.Files.OffersSent; t["hostFileBytes"] = h.Files.BytesSent; }   // v1.6
             var v = Viewer;
             if (v != null) { t["viewer"] = v.State.ToString(); t["viewerSafety"] = v.Safety; t["frames"] = v.Frames; t["controlAllowed"] = v.ControlAllowed; t["clipboardAllowed"] = v.ClipboardAllowed; t["banner"] = v.Banner; t["viewerEnd"] = v.EndReason; t["monitors"] = v.Monitors.Length; t["monitor"] = v.Monitor; t["lastClip"] = v.LastClipFromThem; t["screenW"] = v.Screen.W; t["screenH"] = v.Screen.H; t["viewerDirect"] = v.Direct;
                 t["viewerSound"] = v.SoundOn; t["hostSharesSound"] = v.HostSharesSound; t["audioPackets"] = v.AudioPackets; t["hostMac"] = v.HostMac; t["pathNote"] = v.PathNote;
                 var cs = v.Player as CountingSink; if (cs != null) { t["audioSamples"] = cs.Samples; t["audioHz"] = cs.Hz; }
-                t["rec"] = v.Rec.ToString(); t["recFirstFrameAt"] = v.RecFirstFrameAt; t["recFrames"] = v.RecFrames; t["recPath"] = v.RecLastPath; t["recKind"] = v.RecLastKind; t["fromKeys"] = v.FromKeys; }
+                t["rec"] = v.Rec.ToString(); t["recFirstFrameAt"] = v.RecFirstFrameAt; t["recFrames"] = v.RecFrames; t["recPath"] = v.RecLastPath; t["recKind"] = v.RecLastKind; t["fromKeys"] = v.FromKeys; t["pullWaiting"] = v.PullWaiting; t["pullLast"] = v.PullLast; t["hostAsksFiles"] = v.HostAsksFiles; }
             lock (log) t["log"] = log.ToArray();
             return t;
         }
@@ -909,7 +929,9 @@ namespace HallowAssist
                 case "test-pc-keys": { if (a.Length < 1) return "error test-pc-keys <code> [item]"; var item = string.Join(" ", a.Skip(1)); SetPcPassword(a[0], item.Length > 0 ? "keys" : "type", item); var pc = S.FindPc(a[0]); return pc == null ? "error no such PC" : "ok"; }
                 case "test-connect-saved": { var pc = S.FindPc(arg); if (pc == null) return "error no such PC"; return ConnectSaved(pc) ? "ok" : "error no password source"; }
                 case "test-view-sendcopied": return Viewer.SendCopiedFiles() ?? "ok";
-                case "test-view-getcopied": return Viewer.GetCopiedFiles().StartsWith("Asked") ? "ok" : "error " + Viewer.GetCopiedFiles();
+                case "test-view-getcopied": { var r = Viewer.GetCopiedFiles(); return r == FilePull.WaitingText && Viewer.PullWaiting ? "ok" : "error " + r; }
+                case "test-files-ask": { var f = pendingFileAsk; if (f == null) return "error nothing to answer"; pendingFileAsk = null; f(a.Length > 0 && a[0] == "allow"); return "ok"; }   // v1.6: Allow / Deny on the PC
+                case "test-view-oldhost": Viewer.HostAsksFiles = !(a.Length > 0 && a[0] == "on"); return "ok";   // v1.6: act as if their PC were 1.5 (no "askFiles")
                 case "test-host-sendcopied": if (host == null) return "error no session"; return host.SendCopiedFiles() ?? "ok";
                 case "test-view-rec": if (a.Length > 0 && a[0] == "on") return Viewer.StartRecording() ?? "ok"; Viewer.StopRecording("You stopped recording.", true); return "ok";
                 case "test-host-rec-stop": if (host == null) return "error no session"; host.StopRecording(); return "ok";

@@ -25,6 +25,8 @@ end-to-end encrypted.
 
 ## What it won't do (on purpose)
 
+- No files leave the PC of the person being helped without their click: the helper's **Copy their files here** waits for
+  their **Allow** (1.6).
 - No stealth mode, no hidden install, no starting a session by itself - ever. Every session starts with the person
   clicking Get help, and the bar is always visible while someone is connected.
 - **Unattended access** (connect without anyone clicking Allow) is only for **your own PCs**: off by default; turning it on
@@ -53,6 +55,16 @@ end-to-end encrypted.
 
 ## What's new
 
+- **1.6** - **Their copied files only leave their PC when they say so**: in 1.5, the helper's **Copy their files here**
+  sent the files copied on the other PC with only a note there. Now that PC first asks its person: *"Dom wants to copy
+  these 3 files from your PC: invoice.pdf, photos.zip, setup-notes.txt (18.0 MB in all)"* with **Allow** / **Deny** -
+  Deny is the default, no answer in 60 seconds counts as Deny, and Ctrl+Alt+End still ends the whole session. Nothing
+  (not even the list of names) goes to the helper before Allow, and then exactly the files that were shown are offered;
+  the helper's side still asks before saving them. The helper sees *Waiting for them to allow...*, then *They said no*
+  or the files. Turning off clipboard sharing or ending the session closes the question. A 1.6 PC asks every time, also
+  when a 1.5 helper asks; a 1.6 helper doesn't ask a 1.5 PC at all (that one would send without asking) and says *They
+  need Hallow Assist 1.6 to share files this way*. **Send copied files** on the red bar is the person's own click, so it
+  doesn't ask again.
 - **1.5** - **Passwords from Hallow Keys for Your PCs**: under Your PCs, **... > Password...** can now say *Password from
   Hallow Keys: &lt;item name&gt;*. When you click Connect, Hallow Assist runs Hallow Keys' own command line (`hk.exe --get
   "<item>" --field password`, Hallow Keys 2.6 or newer) hidden; you approve it in Hallow Keys, and the password is turned

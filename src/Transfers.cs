@@ -28,6 +28,7 @@ namespace HallowAssist
         readonly Dictionary<uint, In> incoming = new Dictionary<uint, In>();
         readonly Queue<uint> sendQueue = new Queue<uint>(); bool sending;
         uint nextId = 1;
+        public int OffersSent; public long BytesSent;   // v1.6 tests: what left this side (offers, file bytes)
 
         public Transfers(Action<byte[]> send, Func<long> queued, Func<bool> alive, string folder) { this.send = send; this.queued = queued; this.alive = alive; Folder = folder; }
         void Say(string s) { var h = Note; if (h != null) h(s); }
@@ -84,7 +85,7 @@ namespace HallowAssist
             if (!fi.Exists) return "That file isn't there any more.";
             if (fi.Length > MaxSize) return "That file is over 4 GB.";
             uint id; lock (outgoing) { id = nextId++; outgoing[id] = new Out { Path = path, Name = fi.Name, Size = fi.Length }; }
-            send(Msg.JsonMsg("t", "file-offer", "id", id, "name", fi.Name, "size", fi.Length));
+            send(Msg.JsonMsg("t", "file-offer", "id", id, "name", fi.Name, "size", fi.Length)); OffersSent++;
             Say("Offered " + fi.Name + " (" + Size(fi.Length) + ") - waiting for them to accept.");
             return null;
         }
@@ -93,17 +94,9 @@ namespace HallowAssist
         // Returns an error for the UI, or null when they were offered.
         public string OfferMany(string[] paths, bool clip)
         {
-            var files = new List<FileInfo>(); int folders = 0, missing = 0;
-            foreach (var p in paths ?? new string[0])
-            {
-                if (string.IsNullOrWhiteSpace(p)) continue;
-                try { if (Directory.Exists(p)) { folders++; continue; } var fi = new FileInfo(p); if (fi.Exists) files.Add(fi); else missing++; } catch { missing++; }
-            }
-            var skipped = (folders > 0 ? " Folders aren't sent - zip them first." : "") + (missing > 0 ? " " + missing + " copied " + (missing == 1 ? "file isn't" : "files aren't") + " there any more." : "");
-            if (files.Count == 0) return (folders > 0 || missing > 0 ? "There are no files to send." : "Nothing is copied - copy files in Explorer first.") + skipped;
-            if (files.Count > MaxBatch) return "That's " + files.Count + " files - at most " + MaxBatch + " at once (zip them first).";
-            var big = files.FirstOrDefault(f => f.Length > MaxSize); if (big != null) return big.Name + " is over 4 GB.";
-            long total = files.Sum(f => f.Length); if (total > MaxSize) return "Those files are over 4 GB together - send fewer at once.";
+            List<FileInfo> files; string skipped;
+            var err = Pick(paths, out files, out skipped); if (err != null) return err;
+            long total = files.Sum(f => f.Length);
             if (!PeerBatches)
             {
                 // an older app on the other side: one question per file (and nothing lands on its clipboard)
@@ -118,8 +111,25 @@ namespace HallowAssist
                     var id = nextId++; outgoing[id] = new Out { Path = f.FullName, Name = f.Name, Size = f.Length };
                     list.Add(new Dictionary<string, object> { { "id", id }, { "name", f.Name }, { "size", f.Length } });
                 }
-            send(Msg.JsonMsg("t", "file-batch", "clip", clip, "files", list.ToArray()));
+            send(Msg.JsonMsg("t", "file-batch", "clip", clip, "files", list.ToArray())); OffersSent++;
             Say("Offered " + (files.Count == 1 ? files[0].Name : files.Count + " files") + " (" + Size(total) + ") - waiting for them to accept." + skipped);
+            return null;
+        }
+
+        // v1.6 (from OfferMany): the files among copied paths, with the same limits; an error for the UI, or null
+        public static string Pick(string[] paths, out List<FileInfo> files, out string skipped)
+        {
+            files = new List<FileInfo>(); int folders = 0, missing = 0;
+            foreach (var p in paths ?? new string[0])
+            {
+                if (string.IsNullOrWhiteSpace(p)) continue;
+                try { if (Directory.Exists(p)) { folders++; continue; } var fi = new FileInfo(p); if (fi.Exists) files.Add(fi); else missing++; } catch { missing++; }
+            }
+            skipped = (folders > 0 ? " Folders aren't sent - zip them first." : "") + (missing > 0 ? " " + missing + " copied " + (missing == 1 ? "file isn't" : "files aren't") + " there any more." : "");
+            if (files.Count == 0) return (folders > 0 || missing > 0 ? "There are no files to send." : "Nothing is copied - copy files in Explorer first.") + skipped;
+            if (files.Count > MaxBatch) return "That's " + files.Count + " files - at most " + MaxBatch + " at once (zip them first).";
+            var big = files.FirstOrDefault(f => f.Length > MaxSize); if (big != null) return big.Name + " is over 4 GB.";
+            if (files.Sum(f => f.Length) > MaxSize) return "Those files are over 4 GB together - send fewer at once.";
             return null;
         }
 
@@ -263,7 +273,7 @@ namespace HallowAssist
                     {
                         if (!alive()) return;
                         while (queued() > 2 * 1024 * 1024 && alive()) Thread.Sleep(15);
-                        send(Msg.FileChunk(id, buf, 0, n)); sent += n;
+                        send(Msg.FileChunk(id, buf, 0, n)); sent += n; BytesSent += n;
                         if (sent > o.Size) break;
                     }
                     send(Msg.JsonMsg("t", "file-done", "id", id, "size", sent));

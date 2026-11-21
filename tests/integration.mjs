@@ -204,10 +204,18 @@ await step('copied files (v1.5): both ways through the file transfer - one quest
   // the other way: the helper asks for the files copied on the PC
   const c = path.join(src, 'from-the-pc.txt'); fs.writeFileSync(c, 'COPIED-ON-THE-PC');
   fs.writeFileSync(hostClip, c);
-  const v0 = T('viewer').filesPending;
+  // v1.6: the PC's person is asked first (Allow / Deny) - nothing leaves the PC before Allow
+  const v0 = T('viewer').filesPending, h0 = T('host');
+  assert.equal(T('viewer').hostAsksFiles, true, 'a 1.6 PC says it asks');
   assert.equal(cmd('viewer', 'test-view-getcopied'), 'ok');
+  await until(() => T('host').fileAskPending, 5000, 'the question on the PC');
+  await sleep(800);
+  { const h = T('host'); assert.equal(h.hostFileOffers, h0.hostFileOffers, 'no offer before Allow'); assert.equal(h.hostFileBytes, h0.hostFileBytes, 'no file bytes before Allow'); }
+  assert.equal(T('viewer').filesPending, v0); assert.equal(T('viewer').pullWaiting, true, 'the helper waits');
+  assert.ok(T('host').log.some(l => l.includes('wants to copy a file you copied')), 'the PC is told');
+  assert.equal(cmd('host', 'test-files-ask allow'), 'ok');
   await until(() => T('viewer').filesPending === v0 + 1, 5000, 'the question on the helper');
-  await until(() => T('host').log.some(l => l.includes('asked for the files you copied')), 5000, 'the PC is told');
+  assert.equal(T('viewer').pullLast, 'allowed'); assert.equal(T('viewer').pullWaiting, false);
   cmd('viewer', 'test-file-answer accept');
   const dc = path.join(dirs.viewer, 'Downloads', 'from-the-pc.txt');
   await until(() => fs.existsSync(dc) && fs.readFileSync(dc, 'utf8') === 'COPIED-ON-THE-PC', 10000, 'the file on the helper');
@@ -226,6 +234,45 @@ await step('copied files (v1.5): both ways through the file transfer - one quest
   assert.match(cmd('viewer', 'test-view-getcopied'), /^error .*clipboard sharing/);
   assert.match(cmd('host', 'test-host-sendcopied'), /clipboard sharing/);
   await sleep(500); assert.equal(T('host').filesPending, p0); assert.equal(T('viewer').filesPending, v0);
+});
+
+await step('copied files (v1.6): Deny and no answer in time send nothing; a 1.6 helper refuses a 1.5 PC; clipboard sharing off closes the question', async () => {
+  cmd('host', 'test-clipboard on'); await until(() => T('viewer').clipboardAllowed === true, 5000, 'clipboard sharing on');
+  const src = path.join(WORK, 'copied16'); fs.rmSync(src, { recursive: true, force: true }); fs.mkdirSync(src, { recursive: true });
+  const c = path.join(src, 'private-on-the-pc.txt'); fs.writeFileSync(c, 'PRIVATE-PC-FILE-MARKER ' + 'p'.repeat(50000));
+  fs.writeFileSync(path.join(dirs.host, 'clipboard-files.txt'), c);
+  const dc = path.join(dirs.viewer, 'Downloads', 'private-on-the-pc.txt');
+  const v0 = T('viewer').filesPending, h0 = T('host');
+  const nothingLeft = () => { const h = T('host'); assert.equal(h.hostFileOffers, h0.hostFileOffers, 'no offer'); assert.equal(h.hostFileBytes, h0.hostFileBytes, 'no file bytes'); assert.equal(T('viewer').filesPending, v0); assert.ok(!fs.existsSync(dc)); };
+  // Deny
+  assert.equal(cmd('viewer', 'test-view-getcopied'), 'ok');
+  await until(() => T('host').fileAskPending, 5000, 'the question on the PC');
+  assert.equal(cmd('host', 'test-files-ask deny'), 'ok');
+  await until(() => T('viewer').pullWaiting === false, 5000, 'the helper gets the answer');
+  assert.equal(T('viewer').pullLast, 'deny');
+  assert.ok(T('viewer').log.some(l => l.endsWith(' They said no.')), 'the helper sees "They said no"');
+  await sleep(500); nothingLeft();
+  // no answer: counts as Deny (6 s in test mode, 60 s for real)
+  assert.equal(cmd('viewer', 'test-view-getcopied'), 'ok');
+  await until(() => T('host').fileAskPending, 5000, 'the question again');
+  await until(() => !T('host').pullPending, 12000, 'the timeout');
+  assert.equal(T('host').fileAskPending, false, 'the question went away');
+  await until(() => T('viewer').pullLast === 'timeout', 5000, 'the helper is told');
+  assert.match(cmd('host', 'test-files-ask allow'), /^error/, 'nothing left to allow');
+  await sleep(500); nothingLeft();
+  // clipboard sharing off while asking: the question goes, nothing is sent
+  assert.equal(cmd('viewer', 'test-view-getcopied'), 'ok');
+  await until(() => T('host').fileAskPending, 5000, 'the question once more');
+  cmd('host', 'test-clipboard off');
+  await until(() => T('host').fileAskPending === false && T('viewer').pullWaiting === false, 5000, 'question closed');
+  await sleep(500); nothingLeft();
+  // an older (1.5) PC would send without asking: a 1.6 helper doesn't ask it at all
+  cmd('host', 'test-clipboard on'); await until(() => T('viewer').clipboardAllowed === true, 5000, 'clipboard sharing on');
+  cmd('viewer', 'test-view-oldhost on');
+  assert.equal(cmd('viewer', 'test-view-getcopied'), 'error They need Hallow Assist 1.6 to share files this way.');
+  await sleep(800); assert.equal(T('host').fileAskPending, false); assert.equal(T('host').pullsAsked, h0.pullsAsked + 3); nothingLeft();
+  cmd('viewer', 'test-view-oldhost off'); cmd('host', 'test-clipboard off');
+  await until(() => T('viewer').clipboardAllowed === false, 5000, 'clipboard sharing off');
 });
 
 await step('Stop control: input is ignored from then on and the helper is told', async () => {
@@ -256,7 +303,7 @@ await step('panic hotkey (Ctrl+Alt+End path) disconnects at once; the bar goes a
 
 await step('the relay only ever forwarded ciphertext (no chat, clipboard, file content, JPEG or names)', async () => {
   const all = Buffer.concat(forwarded.map(f => f.data));
-  for (const s of ['hello from the helper', 'hello back', 'CLIP-FROM-HOST', 'CLIP-TO-HOST', 'FILE-CONTENT-MARKER', 'COPIED-FILE-MARKER', 'COPIED-ON-THE-PC', 'copied-one.txt', 'Test Helper', 'to-host.txt', 'JFIF', '"t":']) assert.equal(all.indexOf(s), -1, s);
+  for (const s of ['hello from the helper', 'hello back', 'CLIP-FROM-HOST', 'CLIP-TO-HOST', 'FILE-CONTENT-MARKER', 'COPIED-FILE-MARKER', 'COPIED-ON-THE-PC', 'PRIVATE-PC-FILE-MARKER', 'copied-one.txt', 'Test Helper', 'to-host.txt', 'JFIF', '"t":']) assert.equal(all.indexOf(s), -1, s);
   assert.equal(all.indexOf(Buffer.from([0xff, 0xd8, 0xff, 0xe0])), -1, 'JPEG header');
   const sealed = forwarded.filter(f => f.data[0] === P.T.SEALED);
   assert.ok(sealed.length > 20);
@@ -339,6 +386,33 @@ await step('replayed sealed message from the viewer ends the session (CNG side r
   link.ws.send(m);   // the same bytes again
   await until(() => T('host').host === 'Ended', 5000, 'host ended after replay');
   link.end('x');
+});
+
+await step('a 1.5 helper (clip-files-get) is asked about too: Deny sends nothing, Allow offers the file', async () => {
+  sess = await newHostSession();
+  const link = new P.ViewerLink({ url: `ws://127.0.0.1:${port}/ws`, code: sess.code, password: sess.password, name: 'Old Helper', WebSocketImpl: globalThis.WebSocket });
+  const msgs = []; let ready = false;
+  link.onReady = () => ready = true; link.onEnd = () => {};
+  link.onMessage = b => { if (b[0] === P.M.JSON) msgs.push(P.parseJson(b)); else if (b[0] === P.M.FRAME) link.send(P.jsonMsg({ t: 'ack', seq: P.parseFrame(b).seq })); };
+  await link.start(); await until(() => ready && T('host').consentPending, 10000, 'waiting');
+  cmd('host', 'test-consent allow clipboard');
+  await until(() => msgs.some(m => m.t === 'consent'), 5000, 'consent');
+  assert.equal(msgs.find(m => m.t === 'consent').askFiles, true);
+  const c = path.join(WORK, 'old-helper-wants.txt'); fs.writeFileSync(c, 'OLD-HELPER-PULL');
+  fs.writeFileSync(path.join(dirs.host, 'clipboard-files.txt'), c);
+  const offers = () => msgs.filter(m => m.t === 'file-offer' || m.t === 'file-batch').length;
+  await link.send(P.jsonMsg({ t: 'clip-files-get' }));
+  await until(() => T('host').fileAskPending, 5000, 'the PC is asked');
+  await sleep(600); assert.equal(offers(), 0, 'nothing offered before Allow');
+  cmd('host', 'test-files-ask deny');
+  await until(() => msgs.some(m => m.t === 'note' && m.text === 'They said no.'), 5000, 'an old helper sees a note');
+  await sleep(400); assert.equal(offers(), 0, 'nothing offered after Deny');
+  await link.send(P.jsonMsg({ t: 'clip-files-get' }));
+  await until(() => T('host').fileAskPending, 5000, 'asked again');
+  cmd('host', 'test-files-ask allow');
+  await until(() => offers() === 1, 5000, 'offered after Allow');
+  assert.equal(msgs.find(m => m.t === 'file-offer').name, 'old-helper-wants.txt');
+  cmd('host', 'test-host-end'); link.end('x'); await sleep(300);
 });
 
 await step('unattended access (opt-in): fixed code from the secret, no question asked, the bar still shows', async () => {

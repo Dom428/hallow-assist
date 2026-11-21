@@ -33,6 +33,12 @@ PRIVACY
 - End-to-end encrypted: your relay passes sealed messages along and can't see screens,
   keys, chat or files. Crash reports stay on this PC. Nothing else is sent anywhere.
 
+WHAT'S NEW IN 1.6
+- "Copy their files here" now asks the person being helped first: their PC shows which files and how
+  big, with Allow / Deny (Deny if nobody answers in 60 s; Ctrl+Alt+End still ends the session).
+  Nothing leaves their PC before Allow. Both PCs need 1.6 for this - a 1.6 helper says
+  "They need Hallow Assist 1.6 to share files this way" to an older PC.
+
 WHAT'S NEW IN 1.5
 - Your PCs can get their password from Hallow Keys (2.6 or newer): ... > Password... > "Password from
   Hallow Keys" and the item's name. You approve each use in Keys; the password is used once and wiped,

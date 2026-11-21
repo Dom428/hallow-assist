@@ -88,7 +88,7 @@ namespace HallowAssist
             {
                 Thread.Sleep(1000);
                 if (State != ViewerState.Connected) continue;
-                CheckRecording();
+                CheckRecording(); CheckPull();
                 if (Environment.TickCount % 2000 < 1000) SendJson("t", "ping", "ts", (long)(DateTime.UtcNow - new DateTime(1970, 1, 1)).TotalMilliseconds);
                 if (ClipSync && ClipboardAllowed && Clip != null)
                 {
@@ -205,6 +205,7 @@ namespace HallowAssist
                     ControlAllowed = Msg.Bool(m, "control"); ClipboardAllowed = Msg.Bool(m, "clipboard"); HostName = Msg.Str(m, "host"); HostUnattended = Msg.Bool(m, "unattended");
                     HostSharesSound = Msg.Bool(m, "sound"); HostHasSound = Msg.Bool(m, "soundAvailable");
                     Files.PeerBatches = Msg.Bool(m, "files2"); HostCanRecord = Msg.Bool(m, "rec");   // v1.5
+                    HostAsksFiles = Msg.Bool(m, "askFiles");   // v1.6
                     var list = new List<MonitorInfo>();
                     object mo; if (m.TryGetValue("monitors", out mo) && mo is System.Collections.ArrayList)
                         foreach (var x in (System.Collections.ArrayList)mo) { var d = x as Dictionary<string, object>; if (d != null) list.Add(new MonitorInfo { W = (int)Msg.Num(d, "w"), H = (int)Msg.Num(d, "h"), Primary = Msg.Bool(d, "primary") }); }
@@ -214,7 +215,16 @@ namespace HallowAssist
                     if (SoundOn) SendJson("t", "sound-want", "on", true);
                     Fire(); break;
                 case "control": ControlAllowed = Msg.Bool(m, "on"); Banner = ControlAllowed ? "" : "They turned off control - you can still see their screen."; Fire(); break;
-                case "clipboard": ClipboardAllowed = Msg.Bool(m, "on"); lastClip = null; Fire(); break;
+                case "clipboard": ClipboardAllowed = Msg.Bool(m, "on"); lastClip = null; if (!ClipboardAllowed) PullWaiting = false; Fire(); break;
+                // v1.6: their answer to "Copy their files here" (Allow / Deny / no answer in 60 s / can't)
+                case "clip-files-answer":
+                    {
+                        if (!PullWaiting) break;
+                        PullWaiting = false; var allowed = Msg.Bool(m, "allowed");
+                        PullLast = allowed ? "allowed" : Msg.Str(m, "reason") ?? "deny";
+                        Say(FilePull.AnswerText(allowed, Msg.Str(m, "reason"), Msg.Str(m, "text")));
+                        Fire(); break;
+                    }
                 case "clip": { var t = Msg.Str(m, "text") ?? ""; if (ClipboardAllowed && Clip != null && ClipSync) { lastClip = t; Clip.Set(t); } LastClipFromThem = t; Fire(); break; }
                 case "state":
                     Banner = Msg.Bool(m, "secure") ? "They need to click the admin prompt themselves - Windows hides it from remote help." :
@@ -304,8 +314,18 @@ namespace HallowAssist
         {
             if (State != ViewerState.Connected) return "Not connected.";
             if (!ClipboardAllowed) return "They haven't turned on clipboard sharing.";
-            if (!Files.PeerBatches) return "Their Hallow Assist is older than 1.5 - it can't send copied files yet.";
-            SendJson("t", "clip-files-get"); return "Asked for the files they copied - you're asked before anything is saved.";
+            // v1.6: their PC must ask them first - a 1.5 PC would send without asking, so it isn't asked at all
+            if (!HostAsksFiles) return FilePull.OldPeerText;
+            if (PullWaiting) return FilePull.WaitingText;
+            PullWaiting = true; PullAskedAt = DateTime.UtcNow; PullLast = null;
+            SendJson("t", "clip-files-ask"); Fire();
+            return FilePull.WaitingText;
+        }
+        public bool HostAsksFiles; public volatile bool PullWaiting; public string PullLast; DateTime PullAskedAt;   // v1.6
+        void CheckPull()
+        {
+            // their PC answers within 60 s (then it counts as no); if nothing comes at all, stop waiting a little later
+            if (PullWaiting && (DateTime.UtcNow - PullAskedAt).TotalMilliseconds > FilePull.TimeoutMs + 15000) { PullWaiting = false; PullLast = "timeout"; Say("They said no - no answer came."); Fire(); }
         }
 
         // ---- v1.5: session recording (this side only, off until you click Record). It starts only after their PC confirms

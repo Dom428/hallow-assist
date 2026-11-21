@@ -55,6 +55,8 @@ namespace HallowAssist
         public event Action DrawClear;
         public event Action<string> RestartRequested;             // v1.2: unattended only - the helper restarts this PC
         public event Action<string> Detail;                       // v1.4: connection details (the log), not shown on the bar or the main window
+        public event Action<string, string, Action<bool>> FilesAskNeeded;   // v1.6: title, text, answer(allow) - the helper wants this PC's copied files
+        public event Action FilesAskClosed;                                 // v1.6: the question went away (answered, timed out, session over)
         void Tell(string s) { var h = Detail; if (h != null) try { h(s); } catch { } }
 
         public HostSession(HostOptions opts)
@@ -125,7 +127,7 @@ namespace HallowAssist
             if (ecdh != null) { ecdh.Dispose(); ecdh = null; }
             var d = direct; direct = null; tx = null; directTried = 0; peerFellBack = false; if (d != null) d.Close("session reset");
             StopSound(); SoundShared = false; soundWanted = false;
-            RecordingAsked = false; RecordingNoticeShown = false; Files.PeerBatches = false;
+            RecordingAsked = false; RecordingNoticeShown = false; Files.PeerBatches = false; CancelPull();
             keys = null; viewerPub = null; Control = false; Clipboard = false; HelperName = null; Safety = null;
             ReleaseAll(); Files.CancelAll();
         }
@@ -286,17 +288,10 @@ namespace HallowAssist
                 case "chat": { var text = Msg.Str(m, "text") ?? ""; if (text.Length > 2000) text = text.Substring(0, 2000); var h = Chat; if (h != null) h(text); break; }
                 case "clip": if (Clipboard && o.Clip != null) { var text = Msg.Str(m, "text") ?? ""; if (text.Length <= 1000000) { lastClip = text; o.Clip.Set(text); Say("The helper put text on your clipboard."); } } break;
                 case "bye": End(Msg.Str(m, "reason") ?? "The helper ended the session.", false); break;
-                // v1.5: the helper asks for the files copied on this PC - only while clipboard sharing is on; the helper's app asks them first
-                case "clip-files-get":
-                    {
-                        if (!Clipboard || o.FileClip == null) { SendJson("t", "note", "text", "They haven't turned on clipboard sharing, so their copied files can't be sent."); break; }
-                        var files = o.FileClip.GetFiles();
-                        if (files == null || files.Length == 0) { SendJson("t", "note", "text", "Nothing is copied on their PC - ask them to copy the files in Explorer first."); break; }
-                        var err = Files.OfferMany(files, true);
-                        if (err != null) { SendJson("t", "note", "text", "Their copied files can't be sent: " + err); break; }
-                        Say((HelperName ?? "Your helper") + " asked for the files you copied - sending them (they're asked first). Turn off clipboard sharing to stop this.");
-                        break;
-                    }
+                // v1.6: the helper asks for the files copied on this PC - only while clipboard sharing is on, and this PC's person
+                // is asked first (Allow / Deny, Deny after 60 s). "clip-files-get" is what a 1.5 helper sends: it's asked too.
+                case "clip-files-ask": AskForFiles(false); break;
+                case "clip-files-get": AskForFiles(true); break;
                 // v1.5: session recording on the helper's side - only once this PC shows "Recording" on the red bar
                 case "rec":
                     if (Msg.Bool(m, "on")) { if (!RecordingAsked) { RecordingAsked = true; RecordingNoticeShown = false; Say((HelperName ?? "Your helper") + " is recording this session - the red bar says Recording. Stop recording there whenever you like."); } }
@@ -338,7 +333,7 @@ namespace HallowAssist
                     SoundShared = o.Unattended && o.SoundUnattended && o.Audio != null;
                     WrongPasswords = 0;   // v1.1: only wrong tries in a row count towards the unattended pause
                     var mons = o.Screen.Monitors();
-                    SendJson("t", "consent", "allowed", true, "control", Control, "clipboard", Clipboard, "unattended", o.Unattended, "sound", SoundShared, "soundAvailable", o.Audio != null, "files2", true, "rec", true,
+                    SendJson("t", "consent", "allowed", true, "control", Control, "clipboard", Clipboard, "unattended", o.Unattended, "sound", SoundShared, "soundAvailable", o.Audio != null, "files2", true, "rec", true, "askFiles", true,
                         "monitors", mons.Select((mm, i) => new Dictionary<string, object> { { "i", i }, { "w", mm.W }, { "h", mm.H }, { "primary", mm.Primary } }).ToArray());
                     monitor = Math.Max(0, Array.FindIndex(mons, mm => mm.Primary));
                     keyframe = true; inflight.Clear();
@@ -362,7 +357,65 @@ namespace HallowAssist
         public void SetClipboard(bool on)
         {
             if (State != HostState.Connected) return;
-            Clipboard = on; lastClip = null; SendJson("t", "clipboard", "on", on); Fire();
+            Clipboard = on; lastClip = null; SendJson("t", "clipboard", "on", on);
+            bool old = pullOld;
+            if (!on && CancelPull()) PullReply(false, "cancelled", "They turned off clipboard sharing, so nothing was sent.", old);
+            Fire();
+        }
+
+        // ---- v1.6: the helper's "Copy their files here" - nothing leaves this PC before its person clicks Allow
+        int pullId; volatile bool pullPending; bool pullOld;
+        public bool PullPending { get { return pullPending; } }
+        public int PullsAsked, PullsAllowed;   // tests
+        void PullReply(bool allowed, string reason, string text, bool old)
+        {
+            SendJson("t", "clip-files-answer", "allowed", allowed, "reason", reason, "text", text);
+            if (old && !allowed) SendJson("t", "note", "text", FilePull.AnswerText(false, reason, text));   // a 1.5 helper only shows notes
+        }
+        void AskForFiles(bool old)
+        {
+            if (!Clipboard || o.FileClip == null) { PullReply(false, "clipboard", "They haven't turned on clipboard sharing, so their copied files can't be sent.", old); return; }
+            if (pullPending) { SendJson("t", "note", "text", "They're still being asked about your last request."); return; }
+            var files = o.FileClip.GetFiles();
+            if (files == null || files.Length == 0) { PullReply(false, "nothing", "Nothing is copied on their PC - ask them to copy the files in Explorer first.", old); return; }
+            PullAsk ask; var err = FilePull.Prepare(files, out ask);
+            if (err != null) { PullReply(false, "error", "Their copied files can't be sent: " + err, old); return; }
+            int id, cid;
+            lock (gate) { id = ++pullId; cid = consentId; pullPending = true; pullOld = old; PullsAsked++; }
+            var helper = HelperName ?? "Your helper";
+            Say(helper + " wants to copy " + (ask.Names.Length == 1 ? "a file" : ask.Names.Length + " files") + " you copied - nothing is sent unless you click Allow.");
+            var answer = FilePull.Once(r => PullAnswered(id, cid, ask, r, old), FilePull.TimeoutMs);
+            var h = FilesAskNeeded;
+            if (h == null) answer(PullResult.Deny);
+            else try { h(FilePull.Title(helper, ask.Names.Length), FilePull.Text(ask), ok => answer(ok ? PullResult.Allow : PullResult.Deny)); } catch { answer(PullResult.Deny); }
+            Fire();
+        }
+        void PullAnswered(int id, int cid, PullAsk ask, PullResult r, bool old)
+        {
+            lock (gate) { if (id != pullId || !pullPending) return; pullPending = false; }
+            var closed = FilesAskClosed; if (closed != null) try { closed(); } catch { }
+            if (State != HostState.Connected || consentId != cid) return;
+            if (r != PullResult.Allow)
+            {
+                PullReply(false, r == PullResult.Timeout ? "timeout" : "deny", null, old);
+                Say(r == PullResult.Timeout ? "No answer in time - your files were not sent." : "You said no - your files were not sent.");
+                Fire(); return;
+            }
+            if (!Clipboard || o.FileClip == null) { PullReply(false, "cancelled", "They turned off clipboard sharing, so nothing was sent.", old); Fire(); return; }
+            PullReply(true, "allow", null, old);
+            var err = Files.OfferMany(ask.Paths, true);   // exactly the files that were shown
+            if (err != null) { PullReply(false, "error", "Their copied files can't be sent: " + err, old); Say("Your files couldn't be sent: " + err); Fire(); return; }
+            PullsAllowed++;
+            Say("You allowed it - offering " + FilePull.List(ask) + " to " + (HelperName ?? "your helper") + ".");
+            Fire();
+        }
+        // a question that's still open goes away (as Deny); true if there was one
+        bool CancelPull()
+        {
+            bool was;
+            lock (gate) { was = pullPending; pullPending = false; pullId++; }
+            if (was) { var closed = FilesAskClosed; if (closed != null) try { closed(); } catch { } }
+            return was;
         }
         // v1.4: Share sound (the red bar). Sound only flows while this is on AND the helper turned Sound on.
         public void SetSound(bool on)
@@ -409,6 +462,7 @@ namespace HallowAssist
             if (Interlocked.Exchange(ref ended, 1) == 1) return;
             if (tellPeer && chan != null) SendJson("t", "bye", "reason", "They ended the session.");
             lock (gate) { State = HostState.Ended; EndReason = reason; ReleaseAll(); Files.CancelAll(); }
+            CancelPull();   // v1.6: an open question about copied files goes away
             Crash.Secrets = new string[0];
             Password = null;
             StopSound();

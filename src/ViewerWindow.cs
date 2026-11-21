@@ -56,7 +56,7 @@ namespace HallowAssist
             sendCopiedBtn.ToolTip = "Copy files in Explorer on this PC, then click here: they're asked, and once they accept, the files are on their clipboard - paste them into any folder there with Ctrl+V.";
             bar.Children.Add(sendCopiedBtn);
             getCopiedBtn = Bb("Copy their files here", () => Note(v.GetCopiedFiles()));
-            getCopiedBtn.ToolTip = "Get the files they copied in Explorer on their PC: you're asked first, then the files are in your received-files folder and on your clipboard (paste with Ctrl+V).";
+            getCopiedBtn.ToolTip = "Ask for the files they copied in Explorer on their PC: they're asked first (Allow / Deny) and nothing is sent unless they allow it; then you're asked before saving, and the files are in your received-files folder and on your clipboard (paste with Ctrl+V).";
             bar.Children.Add(getCopiedBtn);
             // v1.5: recording on this PC (off until you click it; their red bar says Recording the whole time)
             recBtn = new ToggleButton { Content = "Record", Style = Ui.S("Chip"), Margin = new Thickness(0, 0, 6, 4),
@@ -192,6 +192,8 @@ namespace HallowAssist
             soundBtn.IsEnabled = v.State == ViewerState.Connected && v.HostHasSound; soundBtn.IsChecked = v.SoundOn;
             soundBtn.Content = v.SoundOn && !v.HostSharesSound ? "Sound (they haven't shared it)" : "Sound";
             sendCopiedBtn.IsEnabled = getCopiedBtn.IsEnabled = v.State == ViewerState.Connected && v.ClipboardAllowed;
+            if (v.PullWaiting) getCopiedBtn.IsEnabled = false;   // v1.6: their PC is asking them
+            getCopiedBtn.Content = v.PullWaiting ? FilePull.WaitingText : "Copy their files here";
             var rec = snapRec ? ViewerSession.RecState.On : v.Rec;
             recBtn.IsEnabled = v.State == ViewerState.Connected || rec != ViewerSession.RecState.Off; recBtn.IsChecked = rec != ViewerSession.RecState.Off;
             recBtn.Content = rec == ViewerSession.RecState.Asking ? "Record (waiting for their PC...)" : rec == ViewerSession.RecState.On ? "\u25cf Recording " + SessionRecorder.Elapsed(snapRec ? TimeSpan.FromSeconds(83) : DateTime.Now - v.RecStarted) : "Record";
