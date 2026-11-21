@@ -1,4 +1,4 @@
-// Hallow Assist 1.2: online status for Your PCs, the connection history on the PC being helped, drawing on their screen,
+﻿// Hallow Assist 1.2: online status for Your PCs, the connection history on the PC being helped, drawing on their screen,
 // and restarting one of your own PCs with an automatic reconnect afterwards.
 using System;
 using System.Collections.Generic;
@@ -55,6 +55,7 @@ namespace HallowAssist
         [DataMember] public string Start, End, Helper, Client;
         [DataMember] public bool Unattended, ControlAllowed, InputUsed;
         [DataMember] public int FilesReceived;
+        [DataMember] public bool Recorded;   // v1.5: the helper recorded it (the red bar said so)
     }
     public static class History
     {
@@ -101,7 +102,7 @@ namespace HallowAssist
             var len = end <= s ? "still connected" : mins < 1 ? "under a minute" : mins < 60 ? mins + " min" : (mins / 60) + " h " + (mins % 60) + " min";
             return day + " " + s.ToString("HH:mm") + "  -  " + (e.Helper ?? "Someone") + (e.Client == "browser" ? " (browser)" : "") + "  -  " + len +
                 (e.InputUsed ? "  -  used your mouse and keyboard" : e.ControlAllowed ? "  -  could use your mouse and keyboard" : "  -  view only") +
-                (e.FilesReceived > 0 ? "  -  " + e.FilesReceived + (e.FilesReceived == 1 ? " file" : " files") + " received" : "") + (e.Unattended ? "  -  unattended" : "");
+                (e.FilesReceived > 0 ? "  -  " + e.FilesReceived + (e.FilesReceived == 1 ? " file" : " files") + " received" : "") + (e.Unattended ? "  -  unattended" : "") + (e.Recorded ? "  -  recorded by the helper" : "");
         }
     }
 

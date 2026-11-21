@@ -22,6 +22,7 @@ namespace HallowAssist
         [DataMember] public string Key;        // DPAPI-protected PBKDF2 key (null = type the password each time)
         [DataMember] public string LastUsed;   // ISO time of the last good connection
         [DataMember] public string Mac;        // v1.4: its network adapter (learned in an unattended session) for Wake-on-LAN
+        [DataMember] public string KeysItem;   // v1.5: the password comes from this Hallow Keys item (hk.exe), never stored here
     }
 
     [DataContract]
@@ -53,6 +54,7 @@ namespace HallowAssist
         [DataMember] public List<SavedPc> Pcs;   // v1.1: Your PCs
         [DataMember] public bool DirectOff;      // v1.3: never connect directly (always through the relay)
         [DataMember] public bool SoundUnattended;   // v1.4: unattended sessions start with Share sound on (off by default)
+        [DataMember] public string ReceiveFolder;   // v1.5: where received files go (empty = Downloads\Hallow Assist)
 
         public static AssistSettings Load()
         {
@@ -88,11 +90,13 @@ namespace HallowAssist
                 var code = Kdf.NormCode(p.Code); if (code.Length != 9 || o.Any(x => x.Code == code)) continue;
                 var name = new string((p.Name ?? "").Where(ch => !char.IsControl(ch)).ToArray()).Trim();
                 if (name.Length == 0) name = Ui.FormatCode(code); if (name.Length > 40) name = name.Substring(0, 40);
-                o.Add(new SavedPc { Name = name, Code = code, Key = p.Key, LastUsed = p.LastUsed, Mac = Wol.NormMac(p.Mac) });
+                o.Add(new SavedPc { Name = name, Code = code, Key = p.Key, LastUsed = p.LastUsed, Mac = Wol.NormMac(p.Mac), KeysItem = HallowKeys.CheckItem(p.KeysItem) == null ? p.KeysItem.Trim() : null });
                 if (o.Count >= MaxPcs) break;
             }
             return o;
         }
+        // v1.5: received files go to the folder picked in Settings, if it's still there; otherwise Downloads\Hallow Assist
+        public string ReceiveDir() { try { if (TestDir == null && !string.IsNullOrWhiteSpace(ReceiveFolder) && Directory.Exists(ReceiveFolder)) return ReceiveFolder; } catch { } return Transfers.DownloadFolder(); }
         public SavedPc FindPc(string code) { code = Kdf.NormCode(code); return Pcs.FirstOrDefault(p => p.Code == code); }
         static readonly object saveLock = new object();
         public void Save()

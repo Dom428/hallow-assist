@@ -1,6 +1,7 @@
 # Builds HallowAssist.exe with the C# compiler that ships with Windows (.NET Framework 4.8) - nothing to install.
 #   .\build.ps1          the app
-#   .\build.ps1 -Tests   also tests\AssistTests.exe (unit tests: crypto, tiles, input mapping, protocol)
+#   .\build.ps1 -Tests   also tests\AssistTests.exe (unit tests: crypto, tiles, input mapping, protocol) and
+#                        tests\standin\hk.exe (a stand-in for Hallow Keys' command line - the tests never use the real one)
 param([switch]$Tests)
 $ErrorActionPreference = 'Stop'
 $fw = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319"
@@ -20,4 +21,8 @@ if ($Tests) {
     & "$fw\csc.exe" @($common + @('/target:exe', "/out:$t", '/main:HallowAssist.Tests.Run') + $files + (Get-ChildItem (Join-Path $PSScriptRoot 'tests') -Filter *.cs | ForEach-Object FullName))
     if ($LASTEXITCODE -ne 0) { throw "Test build failed" }
     "Built $t"
+    $hk = Join-Path $PSScriptRoot 'tests\standin\hk.exe'
+    & "$fw\csc.exe" /nologo /optimize+ /target:exe "/out:$hk" (Join-Path $PSScriptRoot 'tests\standin\hk.cs')
+    if ($LASTEXITCODE -ne 0) { throw "Stand-in build failed" }
+    "Built $hk"
 }

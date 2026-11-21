@@ -41,7 +41,7 @@ jobs:
         run: |
           & .\tests\AssistTests.exe
           if ($LASTEXITCODE -ne 0) { throw "unit tests failed" }
-      - name: Integration tests (local relay, two app copies in test mode, the browser viewer in headless Edge)
+      - name: Integration tests (local relay, two app copies in test mode, the browser viewer in headless Edge, a Hallow Keys stand-in, copied files, recording)
         shell: powershell
         run: |
           node tests/integration.mjs "$PWD\tests\out"

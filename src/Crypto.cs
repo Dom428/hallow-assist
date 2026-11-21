@@ -38,6 +38,21 @@ namespace HallowAssist
         {
             using (var p = new Rfc2898DeriveBytes(Utf8(NormPassword(password)), Utf8("hallow-assist/v1/pw/" + NormCode(code)), Iterations, HashAlgorithmName.SHA256)) return p.GetBytes(32);
         }
+        // v1.5: the same key from a password held in a char array (Hallow Keys): no string is made from it, so the caller can
+        // wipe every copy afterwards. Same normalisation as NormPassword.
+        public static byte[] PasswordKey(char[] pw, int len, string code)
+        {
+            int s = 0, e = Math.Min(len, pw.Length);
+            while (s < e && char.IsWhiteSpace(pw[s])) s++; while (e > s && char.IsWhiteSpace(pw[e - 1])) e--;
+            var compact = new char[e - s]; int n = 0;
+            for (int i = s; i < e; i++) { var c = pw[i]; if (c != ' ' && c != '-' && c != '\t') compact[n++] = c; }
+            bool six = n == 6; for (int i = 0; six && i < n; i++) if (!(compact[i] < 128 && char.IsLetterOrDigit(compact[i]))) six = false;
+            byte[] bytes;
+            if (six) { for (int i = 0; i < n; i++) compact[i] = char.ToUpperInvariant(compact[i]); bytes = Encoding.UTF8.GetBytes(compact, 0, n); }
+            else bytes = Encoding.UTF8.GetBytes(pw, s, e - s);
+            try { using (var p = new Rfc2898DeriveBytes(bytes, Utf8("hallow-assist/v1/pw/" + NormCode(code)), Iterations, HashAlgorithmName.SHA256)) return p.GetBytes(32); }
+            finally { Array.Clear(bytes, 0, bytes.Length); Array.Clear(compact, 0, compact.Length); }
+        }
         public static byte[] Hkdf(byte[] ikm, byte[] salt, byte[] info, int len)
         {
             var prk = Hmac(salt, ikm); var okm = new byte[len]; var t = new byte[0]; int done = 0;

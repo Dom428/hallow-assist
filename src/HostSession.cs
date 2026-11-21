@@ -25,6 +25,7 @@ namespace HallowAssist
         public IAudioSource Audio;        // v1.4: this PC's sound (only while Share sound is on and the helper asked for it)
         public bool SoundUnattended;      // v1.4: unattended sessions start with Share sound on (a setting, off by default)
         public ScreenSource Screen; public IInputSink Input; public IClip Clip; public string DownloadDir;
+        public IFileClip FileClip;        // v1.5: copied files (only while clipboard sharing is on)
     }
 
     public class HostSession
@@ -61,6 +62,13 @@ namespace HallowAssist
             o = opts;
             Files = new Transfers(p => SendPlain(p), () => Queued, () => State == HostState.Connected, opts.DownloadDir ?? Transfers.DownloadFolder());
             Files.Note += s => Say(s);
+            // v1.5: copied files that arrived are put on this PC's clipboard (only while clipboard sharing is on)
+            Files.BatchReceived += (paths, clip) =>
+            {
+                if (!clip || !Clipboard || o.FileClip == null || State != HostState.Connected) return;
+                o.FileClip.SetFiles(paths);
+                Say((paths.Length == 1 ? "The file is" : "The " + paths.Length + " files are") + " on your clipboard too - paste with Ctrl+V into any folder.");
+            };
         }
         void Fire() { var h = Changed; if (h != null) try { h(); } catch { } }
         void Say(string s) { var h = Note; if (h != null) try { h(s); } catch { } }
@@ -117,6 +125,7 @@ namespace HallowAssist
             if (ecdh != null) { ecdh.Dispose(); ecdh = null; }
             var d = direct; direct = null; tx = null; directTried = 0; peerFellBack = false; if (d != null) d.Close("session reset");
             StopSound(); SoundShared = false; soundWanted = false;
+            RecordingAsked = false; RecordingNoticeShown = false; Files.PeerBatches = false;
             keys = null; viewerPub = null; Control = false; Clipboard = false; HelperName = null; Safety = null;
             ReleaseAll(); Files.CancelAll();
         }
@@ -246,6 +255,7 @@ namespace HallowAssist
                     var name = (Msg.Str(m, "name") ?? "").Trim(); var clean = new string(name.Where(ch => !char.IsControl(ch)).ToArray());
                     HelperName = clean.Length == 0 ? "Someone" : clean.Length > 40 ? clean.Substring(0, 40) : clean;
                     HelperClient = Msg.Str(m, "client") == "browser" ? "browser" : "app";
+                    Files.PeerBatches = Msg.Bool(m, "files2");   // v1.5
                     State = HostState.Asking;
                 }
                 Fire();
@@ -276,6 +286,22 @@ namespace HallowAssist
                 case "chat": { var text = Msg.Str(m, "text") ?? ""; if (text.Length > 2000) text = text.Substring(0, 2000); var h = Chat; if (h != null) h(text); break; }
                 case "clip": if (Clipboard && o.Clip != null) { var text = Msg.Str(m, "text") ?? ""; if (text.Length <= 1000000) { lastClip = text; o.Clip.Set(text); Say("The helper put text on your clipboard."); } } break;
                 case "bye": End(Msg.Str(m, "reason") ?? "The helper ended the session.", false); break;
+                // v1.5: the helper asks for the files copied on this PC - only while clipboard sharing is on; the helper's app asks them first
+                case "clip-files-get":
+                    {
+                        if (!Clipboard || o.FileClip == null) { SendJson("t", "note", "text", "They haven't turned on clipboard sharing, so their copied files can't be sent."); break; }
+                        var files = o.FileClip.GetFiles();
+                        if (files == null || files.Length == 0) { SendJson("t", "note", "text", "Nothing is copied on their PC - ask them to copy the files in Explorer first."); break; }
+                        var err = Files.OfferMany(files, true);
+                        if (err != null) { SendJson("t", "note", "text", "Their copied files can't be sent: " + err); break; }
+                        Say((HelperName ?? "Your helper") + " asked for the files you copied - sending them (they're asked first). Turn off clipboard sharing to stop this.");
+                        break;
+                    }
+                // v1.5: session recording on the helper's side - only once this PC shows "Recording" on the red bar
+                case "rec":
+                    if (Msg.Bool(m, "on")) { if (!RecordingAsked) { RecordingAsked = true; RecordingNoticeShown = false; Say((HelperName ?? "Your helper") + " is recording this session - the red bar says Recording. Stop recording there whenever you like."); } }
+                    else if (RecordingAsked) { RecordingAsked = false; RecordingNoticeShown = false; Say((HelperName ?? "Your helper") + " stopped recording."); }
+                    Fire(); break;
                 // v1.2: drawing is allowed in view-only sessions too - it only shows lines, it can't click anything
                 case "draw":
                     {
@@ -312,7 +338,7 @@ namespace HallowAssist
                     SoundShared = o.Unattended && o.SoundUnattended && o.Audio != null;
                     WrongPasswords = 0;   // v1.1: only wrong tries in a row count towards the unattended pause
                     var mons = o.Screen.Monitors();
-                    SendJson("t", "consent", "allowed", true, "control", Control, "clipboard", Clipboard, "unattended", o.Unattended, "sound", SoundShared, "soundAvailable", o.Audio != null,
+                    SendJson("t", "consent", "allowed", true, "control", Control, "clipboard", Clipboard, "unattended", o.Unattended, "sound", SoundShared, "soundAvailable", o.Audio != null, "files2", true, "rec", true,
                         "monitors", mons.Select((mm, i) => new Dictionary<string, object> { { "i", i }, { "w", mm.W }, { "h", mm.H }, { "primary", mm.Primary } }).ToArray());
                     monitor = Math.Max(0, Array.FindIndex(mons, mm => mm.Primary));
                     keyframe = true; inflight.Clear();
@@ -345,6 +371,30 @@ namespace HallowAssist
             SoundShared = on; SendJson("t", "sound", "on", on); UpdateSound(); Fire();
         }
         public bool SoundAvailable { get { return o.Audio != null; } }
+        // v1.5: this PC's copied files to the helper (they're asked first) - only while clipboard sharing is on
+        public string SendCopiedFiles()
+        {
+            if (State != HostState.Connected) return "Not connected.";
+            if (!Clipboard || o.FileClip == null) return "Turn on clipboard sharing first.";
+            return Files.OfferMany(o.FileClip.GetFiles(), true);
+        }
+        // v1.5: recording. The helper's app only records after RecordingNoticeShown: the UI calls NoticeShown() once the red bar
+        // says "Recording" (NoticeUp), and while it keeps saying so this PC confirms every few seconds - when the confirmations
+        // stop, the helper's app stops recording.
+        public volatile bool RecordingAsked, RecordingNoticeShown, NoticeUp; public long NoticeShownAt;
+        public static int RecBeatMs { get { return AssistSettings.TestDir != null ? 1000 : 3000; } }
+        public void NoticeShown()
+        {
+            if (!RecordingAsked || RecordingNoticeShown || !NoticeUp || State != HostState.Connected) return;
+            RecordingNoticeShown = true; NoticeShownAt = (long)(DateTime.UtcNow - new DateTime(1970, 1, 1)).TotalMilliseconds;
+            SendJson("t", "rec-ok", "on", true);
+        }
+        public void StopRecording()
+        {
+            if (!RecordingAsked || State != HostState.Connected) return;
+            RecordingAsked = false; RecordingNoticeShown = false;
+            SendJson("t", "rec", "on", false); Say("You stopped the recording."); Fire();
+        }
         public void SendChat(string text) { if (State == HostState.Connected && !string.IsNullOrWhiteSpace(text)) SendJson("t", "chat", "text", text.Length > 2000 ? text.Substring(0, 2000) : text); }
         public string SendFile(string path) { if (State != HostState.Connected) return "Not connected."; return Files.Offer(path); }
         // Disconnect button, panic hotkey, closing the app
@@ -464,7 +514,7 @@ namespace HallowAssist
         }
         void CaptureLoop(int cid)
         {
-            var enc = new TileEncoder(); uint seq = 0; var sw = Stopwatch.StartNew(); long lastFrame = -1000, lastCheck = -1000, lastClipCheck = 0;
+            var enc = new TileEncoder(); uint seq = 0; var sw = Stopwatch.StartNew(); long lastFrame = -1000, lastCheck = -1000, lastClipCheck = 0, lastBeat = 0;
             int f = Quality.Fixed(quality); if (f >= 0) level = f;
             try
             {
@@ -484,6 +534,8 @@ namespace HallowAssist
                         var c = o.Clip.Get();
                         if (c != null && c != lastClip && c.Length <= 1000000) { bool first = lastClip == null; lastClip = c; if (!first) SendJson("t", "clip", "text", c); }
                     }
+                    // v1.5: "the red bar still says Recording" - without this the helper's app stops recording
+                    if (RecordingNoticeShown && now - lastBeat >= RecBeatMs) { lastBeat = now; if (RecordingAsked && NoticeUp) SendJson("t", "rec-ok", "on", true); }
                     int interval = quality == "fast" ? 50 : 66;
                     int waiting; lock (inflight) waiting = inflight.Count;
                     if (now - lastFrame < interval || waiting >= 3 || Queued > 1024 * 1024) { Thread.Sleep(8); continue; }

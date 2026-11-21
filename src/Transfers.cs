@@ -1,5 +1,6 @@
 ﻿// Hallow Assist file transfer, both ways, inside the sealed channel. The receiving side is always asked first
-// (file-offer -> Accept/Decline); files land in Downloads\Hallow Assist with a name that never overwrites anything.
+// (file-offer -> Accept/Decline); files land in Downloads\Hallow Assist (or the folder picked in Settings) with a name that
+// never overwrites anything. v1.5: several files (copied files) go as one "file-batch" with one question for all of them.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -11,15 +12,21 @@ namespace HallowAssist
     public class Transfers
     {
         public const long MaxSize = 4L * 1024 * 1024 * 1024;
+        public const int MaxBatch = 100;           // v1.5: copied files at once
         readonly Action<byte[]> send; readonly Func<long> queued; readonly Func<bool> alive;
         public string Folder;
-        public event Action<string, long, Action<bool>> Offered;   // name, size, answer(accept)
-        public event Action<string> Note;                          // one line for the UI
-        public event Action<string> Received;                      // full path
+        public bool PeerBatches;                   // v1.5: the other app understands "file-batch" (else one offer per file)
+        public event Action<string, long, Action<bool>> Offered;            // name, size, answer(accept)
+        public event Action<string[], long, bool, Action<bool>> OfferedMany; // v1.5: names, total size, copied files, answer(accept)
+        public event Action<string> Note;                                   // one line for the UI
+        public event Action<string> Received;                               // full path
+        public event Action<string[], bool> BatchReceived;                  // v1.5: the files of a batch that arrived complete, copied files
         class Out { public string Path, Name; public long Size; }
-        class In { public string Name, Part; public long Size, Got; public FileStream Stream; }
+        class In { public string Name, Part; public long Size, Got; public FileStream Stream; public Batch Batch; }
+        class Batch { public int Left; public bool Clip; public readonly List<string> Done = new List<string>(); }
         readonly Dictionary<uint, Out> outgoing = new Dictionary<uint, Out>();
         readonly Dictionary<uint, In> incoming = new Dictionary<uint, In>();
+        readonly Queue<uint> sendQueue = new Queue<uint>(); bool sending;
         uint nextId = 1;
 
         public Transfers(Action<byte[]> send, Func<long> queued, Func<bool> alive, string folder) { this.send = send; this.queued = queued; this.alive = alive; Folder = folder; }
@@ -40,6 +47,18 @@ namespace HallowAssist
         static readonly string[] RiskyExt = { ".exe", ".msi", ".msix", ".appx", ".bat", ".cmd", ".com", ".scr", ".pif", ".cpl", ".ps1", ".psm1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh", ".hta", ".lnk", ".url", ".reg", ".jar", ".dll", ".sys", ".inf", ".iso", ".img", ".vhd", ".vhdx", ".application", ".appref-ms", ".settingcontent-ms", ".library-ms", ".search-ms", ".docm", ".xlsm", ".pptm" };
         public static bool Risky(string name) { var e = System.IO.Path.GetExtension(name ?? "").ToLowerInvariant(); return RiskyExt.Contains(e); }
         public static string Warning(string name) { return Risky(name) ? " It's a program, script or shortcut: opening it runs it, so only open it if you trust them." : ""; }
+        // v1.5: the question for several files at once
+        public static string BatchText(string[] names, long total, string folder, bool clip)
+        {
+            var shown = names.Take(3).ToList();
+            var list = names.Length <= 3 ? string.Join(", ", shown) : string.Join(", ", shown) + " and " + (names.Length - 3) + " more";
+            var risky = names.Where(Risky).Take(3).ToList();
+            return list + " (" + Size(total) + (names.Length > 1 ? " in all" : "") + "). " + (names.Length == 1 ? "It goes" : "They go") + " into " + folder + "." +
+                (clip ? " Then " + (names.Length == 1 ? "it's" : "they're") + " on your clipboard too: paste with Ctrl+V into any folder." : "") +
+                " Only accept files you expect." +
+                (risky.Count > 0 ? " " + (names.Length == 1 ? "It's" : "Some are") + " programs, scripts or shortcuts (" + string.Join(", ", risky) + "): opening one runs it, so only open them if you trust them." : "");
+        }
+        public static string BatchTitle(string who, int n, bool clip) { return who + (who == "They" ? " want" : " wants") + " to send you " + (n == 1 ? "a file" : n + " files") + (clip ? " they copied" : ""); }
 
         // v1.1: mark received files as coming from the internet (Mark of the Web), so Windows SmartScreen and Office
         // Protected View treat them like a download instead of a file you made yourself
@@ -70,6 +89,40 @@ namespace HallowAssist
             return null;
         }
 
+        // v1.5: several files at once (copied files): folders are skipped, at most MaxBatch files and 4 GB in all.
+        // Returns an error for the UI, or null when they were offered.
+        public string OfferMany(string[] paths, bool clip)
+        {
+            var files = new List<FileInfo>(); int folders = 0, missing = 0;
+            foreach (var p in paths ?? new string[0])
+            {
+                if (string.IsNullOrWhiteSpace(p)) continue;
+                try { if (Directory.Exists(p)) { folders++; continue; } var fi = new FileInfo(p); if (fi.Exists) files.Add(fi); else missing++; } catch { missing++; }
+            }
+            var skipped = (folders > 0 ? " Folders aren't sent - zip them first." : "") + (missing > 0 ? " " + missing + " copied " + (missing == 1 ? "file isn't" : "files aren't") + " there any more." : "");
+            if (files.Count == 0) return (folders > 0 || missing > 0 ? "There are no files to send." : "Nothing is copied - copy files in Explorer first.") + skipped;
+            if (files.Count > MaxBatch) return "That's " + files.Count + " files - at most " + MaxBatch + " at once (zip them first).";
+            var big = files.FirstOrDefault(f => f.Length > MaxSize); if (big != null) return big.Name + " is over 4 GB.";
+            long total = files.Sum(f => f.Length); if (total > MaxSize) return "Those files are over 4 GB together - send fewer at once.";
+            if (!PeerBatches)
+            {
+                // an older app on the other side: one question per file (and nothing lands on its clipboard)
+                foreach (var f in files) { var e = Offer(f.FullName); if (e != null) return e; }
+                if (skipped.Length > 0) Say(skipped.Trim());
+                return null;
+            }
+            var list = new List<Dictionary<string, object>>();
+            lock (outgoing)
+                foreach (var f in files)
+                {
+                    var id = nextId++; outgoing[id] = new Out { Path = f.FullName, Name = f.Name, Size = f.Length };
+                    list.Add(new Dictionary<string, object> { { "id", id }, { "name", f.Name }, { "size", f.Length } });
+                }
+            send(Msg.JsonMsg("t", "file-batch", "clip", clip, "files", list.ToArray()));
+            Say("Offered " + (files.Count == 1 ? files[0].Name : files.Count + " files") + " (" + Size(total) + ") - waiting for them to accept." + skipped);
+            return null;
+        }
+
         // JSON messages about files; true if it was one
         public bool Handle(Dictionary<string, object> m)
         {
@@ -87,22 +140,22 @@ namespace HallowAssist
                         {
                             if (Interlocked.Exchange(ref answered, 1) == 1 || !alive()) return;
                             if (!ok) { send(Msg.JsonMsg("t", "file-decline", "id", id)); Say("Declined " + name + "."); return; }
-                            try
-                            {
-                                Directory.CreateDirectory(Folder);
-                                var part = System.IO.Path.Combine(Folder, name + "." + id + ".part");
-                                lock (incoming) incoming[id] = new In { Name = name, Part = part, Size = size, Stream = new FileStream(part, FileMode.Create, FileAccess.Write) };
-                                send(Msg.JsonMsg("t", "file-accept", "id", id));
-                                Say("Receiving " + name + " (" + Size(size) + ")...");
-                            }
-                            catch (Exception e) { send(Msg.JsonMsg("t", "file-decline", "id", id)); Say("Couldn't save " + name + ": " + e.Message); }
+                            if (Open(id, name, size, null)) { send(Msg.JsonMsg("t", "file-accept", "id", id)); Say("Receiving " + name + " (" + Size(size) + ")..."); }
+                            else send(Msg.JsonMsg("t", "file-decline", "id", id));
                         });
                         return true;
                     }
+                case "file-batch": HandleBatch(m); return true;
                 case "file-accept":
                     {
                         Out o; lock (outgoing) outgoing.TryGetValue(id, out o);
-                        if (o != null) new Thread(() => Stream(id, o)) { IsBackground = true, Name = "file send" }.Start();
+                        if (o == null) return true;
+                        lock (sendQueue)
+                        {
+                            if (sendQueue.Contains(id)) return true;
+                            sendQueue.Enqueue(id);
+                            if (!sending) { sending = true; new Thread(SendLoop) { IsBackground = true, Name = "file send" }.Start(); }
+                        }
                         return true;
                     }
                 case "file-decline": { Out o; lock (outgoing) { outgoing.TryGetValue(id, out o); outgoing.Remove(id); } if (o != null) Say("They declined " + o.Name + "."); return true; }
@@ -111,17 +164,73 @@ namespace HallowAssist
                         In f; lock (incoming) { incoming.TryGetValue(id, out f); incoming.Remove(id); }
                         if (f == null) return true;
                         f.Stream.Dispose();
-                        if (f.Got != f.Size) { TryDelete(f.Part); Say(f.Name + " arrived incomplete and was removed."); return true; }
+                        if (f.Got != f.Size) { TryDelete(f.Part); Say(f.Name + " arrived incomplete and was removed."); BatchStep(f.Batch, null); return true; }
                         var dest = Unique(System.IO.Path.Combine(Folder, f.Name));
                         File.Move(f.Part, dest);
                         MarkFromInternet(dest);
                         Say("Received " + System.IO.Path.GetFileName(dest) + " (" + Size(f.Size) + ") in " + Folder + ".");
                         var h = Received; if (h != null) h(dest);
+                        BatchStep(f.Batch, dest);
                         return true;
                     }
-                case "file-cancel": { In f; lock (incoming) { incoming.TryGetValue(id, out f); incoming.Remove(id); } if (f != null) { f.Stream.Dispose(); TryDelete(f.Part); Say(f.Name + " was cancelled."); } return true; }
+                case "file-cancel": { In f; lock (incoming) { incoming.TryGetValue(id, out f); incoming.Remove(id); } if (f != null) { f.Stream.Dispose(); TryDelete(f.Part); Say(f.Name + " was cancelled."); BatchStep(f.Batch, null); } return true; }
             }
             return false;
+        }
+        bool Open(uint id, string name, long size, Batch b)
+        {
+            try
+            {
+                Directory.CreateDirectory(Folder);
+                var part = System.IO.Path.Combine(Folder, name + "." + id + ".part");
+                lock (incoming)
+                {
+                    if (incoming.ContainsKey(id)) return false;
+                    incoming[id] = new In { Name = name, Part = part, Size = size, Batch = b, Stream = new FileStream(part, FileMode.Create, FileAccess.Write) };
+                }
+                return true;
+            }
+            catch (Exception e) { Say("Couldn't save " + name + ": " + e.Message); return false; }
+        }
+        // v1.5: one question for several files; every name and size is checked as for a single file, and the whole batch too
+        void HandleBatch(Dictionary<string, object> m)
+        {
+            var ids = new List<uint>(); var names = new List<string>(); var sizes = new List<long>(); bool bad = false;
+            object fo; if (m.TryGetValue("files", out fo) && fo is System.Collections.ArrayList)
+                foreach (var x in (System.Collections.ArrayList)fo)
+                {
+                    var d = x as Dictionary<string, object>; if (d == null) { bad = true; continue; }
+                    var id = (uint)Msg.Num(d, "id"); var size = Msg.Num(d, "size");
+                    if (id == 0 || ids.Contains(id) || size < 0 || size > MaxSize) bad = true;
+                    ids.Add(id); names.Add(SafeName(Msg.Str(d, "name"))); sizes.Add(size);
+                }
+            bool clip = Msg.Bool(m, "clip"); long total = sizes.Sum();
+            Action declineAll = () => { foreach (var i in ids) send(Msg.JsonMsg("t", "file-decline", "id", i)); };
+            if (ids.Count == 0) return;
+            if (bad || ids.Count > MaxBatch || total > MaxSize) { declineAll(); Say("Declined " + ids.Count + " files: too many or too big."); return; }
+            var h = OfferedMany;
+            if (h == null) { declineAll(); return; }
+            int answered = 0;
+            h(names.ToArray(), total, clip, ok =>
+            {
+                if (Interlocked.Exchange(ref answered, 1) == 1 || !alive()) return;
+                if (!ok) { declineAll(); Say("Declined " + (ids.Count == 1 ? names[0] : ids.Count + " files") + "."); return; }
+                var b = new Batch { Left = ids.Count, Clip = clip };
+                for (int i = 0; i < ids.Count; i++)
+                {
+                    if (Open(ids[i], names[i], sizes[i], b)) send(Msg.JsonMsg("t", "file-accept", "id", ids[i]));
+                    else { send(Msg.JsonMsg("t", "file-decline", "id", ids[i])); BatchStep(b, null); }
+                }
+                Say("Receiving " + (ids.Count == 1 ? names[0] : ids.Count + " files") + " (" + Size(total) + ")...");
+            });
+        }
+        void BatchStep(Batch b, string done)
+        {
+            if (b == null) return;
+            string[] all = null;
+            lock (b) { if (done != null) b.Done.Add(done); b.Left--; if (b.Left == 0) all = b.Done.ToArray(); }
+            if (all == null || all.Length == 0) return;
+            var h = BatchReceived; if (h != null) h(all, b.Clip);
         }
         public void Chunk(byte[] b)
         {
@@ -129,8 +238,19 @@ namespace HallowAssist
             uint id = Msg.RU32(b, 1); In f; lock (incoming) incoming.TryGetValue(id, out f);
             if (f == null) return;
             f.Got += b.Length - 5;
-            if (f.Got > f.Size) { lock (incoming) incoming.Remove(id); f.Stream.Dispose(); TryDelete(f.Part); send(Msg.JsonMsg("t", "file-cancel", "id", id)); Say(f.Name + " sent more than offered - stopped."); return; }
+            if (f.Got > f.Size) { lock (incoming) incoming.Remove(id); f.Stream.Dispose(); TryDelete(f.Part); send(Msg.JsonMsg("t", "file-cancel", "id", id)); Say(f.Name + " sent more than offered - stopped."); BatchStep(f.Batch, null); return; }
             f.Stream.Write(b, 5, b.Length - 5);
+        }
+        // accepted files go out one after another
+        void SendLoop()
+        {
+            while (true)
+            {
+                uint id; Out o;
+                lock (sendQueue) { if (sendQueue.Count == 0) { sending = false; return; } id = sendQueue.Dequeue(); }
+                lock (outgoing) outgoing.TryGetValue(id, out o);
+                if (o != null) Stream(id, o);
+            }
         }
         void Stream(uint id, Out o)
         {
@@ -157,6 +277,7 @@ namespace HallowAssist
         {
             lock (incoming) { foreach (var f in incoming.Values) { try { f.Stream.Dispose(); } catch { } TryDelete(f.Part); } incoming.Clear(); }
             lock (outgoing) outgoing.Clear();
+            lock (sendQueue) sendQueue.Clear();
         }
         static void TryDelete(string p) { try { File.Delete(p); } catch { } }
         static string Unique(string path)

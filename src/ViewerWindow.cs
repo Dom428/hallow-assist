@@ -18,8 +18,9 @@ namespace HallowAssist
         [DllImport("user32.dll")] static extern uint MapVirtualKey(uint code, uint type);
         readonly ViewerSession v;
         readonly Image img; readonly Border stage; readonly TextBlock status, banner, stats, safetyText; readonly StackPanel monitors;
-        readonly ToggleButton controlBtn, clipBtn, drawBtn, soundBtn; readonly ComboBox quality; readonly Border waitPanel; readonly Button restartBtn;
+        readonly ToggleButton controlBtn, clipBtn, drawBtn, soundBtn, recBtn; readonly Button sendCopiedBtn, getCopiedBtn; readonly ComboBox quality; readonly Border waitPanel; readonly Button restartBtn;
         // v1.2: drawing on their screen - strokes go out in small batches while you drag
+        bool snapRec;
         bool drawOn, drawing; long strokeId = new Random().Next(1, 1 << 30); readonly System.Collections.Generic.List<int> drawPts = new System.Collections.Generic.List<int>(); DispatcherTimer drawFlush;
         WriteableBitmap wb; ChatWindow chat;
         bool controlOn = true; int pending; System.Drawing.Rectangle dirty = System.Drawing.Rectangle.Empty; readonly object dirtyLock = new object();
@@ -50,6 +51,18 @@ namespace HallowAssist
             bar.Children.Add(drawBtn);
             bar.Children.Add(Bb("Chat", OpenChat));
             bar.Children.Add(Bb("Send a file", PickFile));
+            // v1.5: copied files both ways (only while they share their clipboard; the receiving side is asked first)
+            sendCopiedBtn = Bb("Send the files I copied", () => Note(v.SendCopiedFiles() ?? ""));
+            sendCopiedBtn.ToolTip = "Copy files in Explorer on this PC, then click here: they're asked, and once they accept, the files are on their clipboard - paste them into any folder there with Ctrl+V.";
+            bar.Children.Add(sendCopiedBtn);
+            getCopiedBtn = Bb("Copy their files here", () => Note(v.GetCopiedFiles()));
+            getCopiedBtn.ToolTip = "Get the files they copied in Explorer on their PC: you're asked first, then the files are in your received-files folder and on your clipboard (paste with Ctrl+V).";
+            bar.Children.Add(getCopiedBtn);
+            // v1.5: recording on this PC (off until you click it; their red bar says Recording the whole time)
+            recBtn = new ToggleButton { Content = "Record", Style = Ui.S("Chip"), Margin = new Thickness(0, 0, 6, 4),
+                ToolTip = "Record what you see (and hear, if they share sound) to " + v.RecFolder + " on this PC. Their red bar says Recording the whole time - it can't start until their PC confirms that - and it stops if they press Stop recording or the session ends." };
+            recBtn.Click += (s, e) => { if (v.Rec == ViewerSession.RecState.Off) Note(v.StartRecording() ?? ""); else v.StopRecording("You stopped recording.", true); Refresh(); };
+            bar.Children.Add(recBtn);
             quality = new ComboBox { Style = Ui.S("Combo"), Width = 130, Margin = new Thickness(0, 0, 6, 4), ToolTip = "Picture quality" };
             foreach (var q in new[] { "Auto quality", "Best picture", "Balanced", "Fastest" }) quality.Items.Add(new ComboBoxItem { Content = q });
             quality.SelectedIndex = 0;
@@ -117,6 +130,7 @@ namespace HallowAssist
             v.Chat += t => Dispatcher.BeginInvoke(new Action(() => { OpenChat(); chat.Add("Them", t, false); }));
             v.Note += t => Dispatcher.BeginInvoke(new Action(() => Note(t)));
             v.Files.Offered += (name, size, answer) => Dispatcher.BeginInvoke(new Action(() => new PromptWindow("They want to send you a file", name + " (" + Transfers.Size(size) + "). It goes into " + v.Files.Folder + "." + Transfers.Warning(name), "Accept", "Decline", answer) { Owner = this }.Show()));
+            v.Files.OfferedMany += (names, total, clip, answer) => Dispatcher.BeginInvoke(new Action(() => new PromptWindow(Transfers.BatchTitle("They", names.Length, clip), Transfers.BatchText(names, total, v.Files.Folder, clip && v.ClipboardAllowed), "Accept", "Decline", answer) { Owner = this }.Show()));
             if (!Snap.On) { var t = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) }; t.Tick += (s, e) => ShowStats(); t.Start(); }
             Refresh();
         }
@@ -177,6 +191,11 @@ namespace HallowAssist
             clipBtn.IsEnabled = v.ClipboardAllowed; if (!v.ClipboardAllowed) { clipBtn.IsChecked = false; v.ClipSync = false; }
             soundBtn.IsEnabled = v.State == ViewerState.Connected && v.HostHasSound; soundBtn.IsChecked = v.SoundOn;
             soundBtn.Content = v.SoundOn && !v.HostSharesSound ? "Sound (they haven't shared it)" : "Sound";
+            sendCopiedBtn.IsEnabled = getCopiedBtn.IsEnabled = v.State == ViewerState.Connected && v.ClipboardAllowed;
+            var rec = snapRec ? ViewerSession.RecState.On : v.Rec;
+            recBtn.IsEnabled = v.State == ViewerState.Connected || rec != ViewerSession.RecState.Off; recBtn.IsChecked = rec != ViewerSession.RecState.Off;
+            recBtn.Content = rec == ViewerSession.RecState.Asking ? "Record (waiting for their PC...)" : rec == ViewerSession.RecState.On ? "\u25cf Recording " + SessionRecorder.Elapsed(snapRec ? TimeSpan.FromSeconds(83) : DateTime.Now - v.RecStarted) : "Record";
+
             stats.ToolTip = string.IsNullOrEmpty(v.PathNote) ? null : v.PathNote;
             monitors.Children.Clear();
             if (v.Monitors.Length > 1)
@@ -208,6 +227,7 @@ namespace HallowAssist
         void Note(string t) { if (!string.IsNullOrEmpty(t)) status.Text = t; }
 
         // --snap: a made-up picture, never a real screen
+        public void SnapRecording() { snapRec = true; Refresh(); }
         public void SnapFill()
         {
             v.State = ViewerState.Connected; v.ControlAllowed = true; v.Safety = "4827"; v.Status = "Connected."; v.QualityLabel = "good";

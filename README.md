@@ -17,8 +17,9 @@ end-to-end encrypted.
   disconnects). **Ctrl+Alt+End** disconnects at once, and so does closing the app.
 - **Help someone** (you): type their code and password in Hallow Assist, or open your relay's address in **any modern
   browser** - phone, tablet, TV or another PC. You see their screen (switch between monitors), and if they allowed it you
-  use their mouse and keyboard. Chat, copied text both ways (when they turn it on), files both ways (the other side is
-  always asked first), picture quality and connection stats.
+  use their mouse and keyboard. Chat, copied text and copied files both ways (when they turn on clipboard sharing), files
+  both ways (the other side is always asked first), picture quality and connection stats. The app can also **record** the
+  session on your PC - their red bar says "Recording" the whole time.
 - In the browser on a phone or tablet: tap = click, long press = right click, one finger drag = drag, two fingers =
   scroll, pinch = zoom, an on-screen keyboard with Esc/Tab/Ctrl/Alt/Win/arrow keys. Works in landscape.
 
@@ -52,6 +53,27 @@ end-to-end encrypted.
 
 ## What's new
 
+- **1.5** - **Passwords from Hallow Keys for Your PCs**: under Your PCs, **... > Password...** can now say *Password from
+  Hallow Keys: &lt;item name&gt;*. When you click Connect, Hallow Assist runs Hallow Keys' own command line (`hk.exe --get
+  "<item>" --field password`, Hallow Keys 2.6 or newer) hidden; you approve it in Hallow Keys, and the password is turned
+  straight into the session key and wiped from memory (as far as .NET allows) - it's never logged, stored or shown, and
+  Hallow Assist never writes anything into Keys. Each answer from Keys has its own message ("Unlock Hallow Keys and try
+  again", "Turn on the command line in Keys > Settings > Developer tools", not found, denied, not running...), and the
+  dialog has a "How to set this up" text. **Copied files between the two PCs** (part of clipboard sharing, so only while
+  the person being helped has it on): in the viewer, **Send the files I copied** offers the files you copied in Explorer
+  and **Copy their files here** asks for the files they copied; on their red bar, **Send copied files** does the same from
+  their side. The files go through the usual encrypted file transfer with **one question for the whole batch** on the
+  receiving side, into its received-files folder (Downloads\Hallow Assist, or a folder picked in Settings), with the Mark
+  of the Web, the program/script warning, the device-name check and the size limits (4 GB; at most 100 files; folders are
+  skipped - zip them first). Once they've arrived they're also **on the receiver's clipboard**, so Ctrl+V in any Explorer
+  folder there pastes them. (It's buttons plus the clipboard, not a live "paste straight from the other PC" in Explorer -
+  that needs a virtual-file clipboard handler, which isn't in this version.) **Session recording** on the helper's side
+  (off until you click **Record** in the viewer): the picture you receive - and their sound, if they share it - goes to
+  `Videos\Hallow Assist` on your PC, as an **MP4** when Hallow Clips' FFmpeg is on this PC (its first-use copy; H.264 if
+  that FFmpeg has a software H.264 encoder, else MPEG-4) or else as a simple **MJPEG AVI** - nothing is downloaded. It
+  only starts after their PC confirms that its red bar shows **Recording** (with a **Stop recording** button); their PC
+  keeps confirming every few seconds, and the recording stops when they press Stop recording, when the confirmations
+  stop, or when the session ends. Their connection history notes "recorded by the helper". App viewer only.
 - **1.4** - **Wake-on-LAN for Your PCs**: when you connect to one of your own PCs (unattended access), it tells your app its
   network adapter (inside the encrypted session, and only in unattended sessions). Then **Wake** next to it in Your PCs
   sends the standard "magic packet" across your network and waits for its online dot to turn green. It only works on the
@@ -109,7 +131,8 @@ this PC, and updates from GitHub releases (asks first, checks the SHA-256).
 ## Building
 
 - App: `.\build.ps1` (the C# compiler that ships with Windows, .NET Framework 4.8, WPF built in code). `.\build.ps1 -Tests`
-  also builds `tests\AssistTests.exe`.
+  also builds `tests\AssistTests.exe` and `tests\standin\hk.exe` (a stand-in for Hallow Keys' command line with the
+  same exit codes - the tests never use the real Hallow Keys).
 - Relay: `cd server; npm test` (Node 20+, no packages). Integration tests (relay + two app copies in test mode + headless
   Edge): `node tests\integration.mjs <work folder>`.
 - `HallowAssist.exe --snap <folder>` renders every window to PNGs with made-up data.

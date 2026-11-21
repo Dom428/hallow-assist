@@ -66,8 +66,8 @@ namespace HallowAssist
     public class HelpBar : Window
     {
         [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
-        readonly TextBlock text, sub; readonly Button controlBtn, clipBtn, soundBtn;
-        public Action Disconnect, ToggleControl, ToggleClipboard, OpenChat, SendFile, ToggleSound;
+        readonly TextBlock text, sub; readonly Button controlBtn, clipBtn, soundBtn, copiedBtn, recBtn; readonly Border recTag;
+        public Action Disconnect, ToggleControl, ToggleClipboard, OpenChat, SendFile, ToggleSound, SendCopied, StopRecording;
         bool allowClose; DispatcherTimer topTimer;
         public HelpBar()
         {
@@ -78,6 +78,10 @@ namespace HallowAssist
             var row = new StackPanel { Orientation = Orientation.Horizontal };
             var dot = new System.Windows.Shapes.Ellipse { Width = 11, Height = 11, Fill = Ui.Red, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0) };
             row.Children.Add(dot);
+            // v1.5: shown the whole time the helper records - recording can't start before this is on screen
+            recTag = new Border { Background = Ui.Red, CornerRadius = new CornerRadius(4), Padding = new Thickness(7, 2, 7, 2), Margin = new Thickness(0, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center, Visibility = Visibility.Collapsed };
+            recTag.Child = new TextBlock { Text = "\u25cf Recording", FontSize = 12.5, FontWeight = FontWeights.Bold, Foreground = Brushes.White };
+            row.Children.Add(recTag);
             var texts = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 14, 0) };
             text = new TextBlock { FontSize = 13.5, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.NoWrap };
             sub = new TextBlock { FontSize = 11, Foreground = Ui.R("Muted") };
@@ -89,6 +93,12 @@ namespace HallowAssist
             row.Children.Add(controlBtn); row.Children.Add(clipBtn); row.Children.Add(soundBtn);
             row.Children.Add(Ui.Btn("Chat", () => { if (OpenChat != null) OpenChat(); }));
             row.Children.Add(Ui.Btn("Send a file", () => { if (SendFile != null) SendFile(); }));
+            copiedBtn = Ui.Btn("Send copied files", () => { if (SendCopied != null) SendCopied(); });   // v1.5
+            copiedBtn.ToolTip = "Send the files you copied in Explorer to your helper (they're asked first; then they can paste them).";
+            row.Children.Add(copiedBtn);
+            recBtn = Ui.Btn("Stop recording", () => { if (StopRecording != null) StopRecording(); });   // v1.5
+            recBtn.ToolTip = "Your helper is recording what they see of your screen (and hear, if you share sound) on their PC. This stops it.";
+            row.Children.Add(recBtn);
             var disc = Ui.Btn("Disconnect", () => { if (Disconnect != null) Disconnect(); }, true); disc.Margin = new Thickness(0);
             row.Children.Add(disc);
             root.Child = row; Content = root;
@@ -104,14 +114,17 @@ namespace HallowAssist
             }
         }
         // v1.4: the two lines of the bar (also used by the tests, which run without windows)
-        public static string[] Lines(string helper, bool control, bool clipboard, bool unattended, string safety, bool hotkeyOk, bool sound)
+        public static string[] Lines(string helper, bool control, bool clipboard, bool unattended, string safety, bool hotkeyOk, bool sound, bool recording = false)
         {
-            return new[] { helper + " can see your screen" + (control ? " and control it" : "") + (unattended ? " (unattended access)" : "") + (sound ? "  \u00b7  Sound shared" : ""),
+            return new[] { helper + " can see your screen" + (control ? " and control it" : "") + (unattended ? " (unattended access)" : "") + (sound ? "  \u00b7  Sound shared" : "") + (recording ? "  \u00b7  Recording" : ""),
                 "Safety code " + safety + "  \u00b7  " + (hotkeyOk ? "Ctrl+Alt+End disconnects" : "Use Disconnect to end it") + (clipboard ? "  \u00b7  clipboard shared" : "") };
         }
-        public void Update(string helper, bool control, bool clipboard, bool unattended, string safety, bool hotkeyOk, bool sound = false, bool soundAvailable = true)
+        public void Update(string helper, bool control, bool clipboard, bool unattended, string safety, bool hotkeyOk, bool sound = false, bool soundAvailable = true, bool recording = false)
         {
-            var l = Lines(helper, control, clipboard, unattended, safety, hotkeyOk, sound);
+            var l = Lines(helper, control, clipboard, unattended, safety, hotkeyOk, sound, recording);
+            recTag.Visibility = recBtn.Visibility = recording ? Visibility.Visible : Visibility.Collapsed;
+            copiedBtn.Visibility = clipboard ? Visibility.Visible : Visibility.Collapsed;
+            Title = recording ? "Hallow Assist - RECORDING - someone can see your screen" : "Hallow Assist - someone can see your screen";
             text.Text = l[0]; sub.Text = l[1];
             controlBtn.Content = control ? "Stop control" : "Allow control";
             clipBtn.Content = clipboard ? "Stop clipboard" : "Share clipboard";

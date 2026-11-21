@@ -40,7 +40,11 @@ const WOL_PORT = wol.address().port;
 // ---- app instances
 const dirs = { host: path.join(WORK, 'host'), viewer: path.join(WORK, 'viewer') };
 for (const d of Object.values(dirs)) { fs.rmSync(d, { recursive: true, force: true }); fs.mkdirSync(d, { recursive: true }); }
-const env = role => ({ ...process.env, HALLOW_ASSIST_TESTDIR: dirs[role], HALLOW_ASSIST_FAKE: '1', HALLOW_ASSIST_HEADLESS: '1', HALLOW_ASSIST_RELAY: RELAY, HALLOW_ASSIST_WOL_PORT: String(WOL_PORT) });
+// v1.5: a stand-in for Hallow Keys' command line (tests\standin\hk.exe, built by build.ps1 -Tests) - the real Hallow Keys is never used
+const HK = path.join(ROOT, 'tests', 'standin', 'hk.exe'), HK_ITEMS = path.join(WORK, 'hk-items.txt'), HK_LOG = path.join(WORK, 'hk-calls.log');
+fs.writeFileSync(HK_ITEMS, ''); fs.writeFileSync(HK_LOG, '');
+const env = role => ({ ...process.env, HALLOW_ASSIST_TESTDIR: dirs[role], HALLOW_ASSIST_FAKE: '1', HALLOW_ASSIST_HEADLESS: '1', HALLOW_ASSIST_RELAY: RELAY, HALLOW_ASSIST_WOL_PORT: String(WOL_PORT),
+  HALLOW_ASSIST_HK: HK, HK_STANDIN_ITEMS: HK_ITEMS, HK_STANDIN_LOG: HK_LOG, HALLOW_ASSIST_HK_TIMEOUT: '4' });
 const procs = {};
 function launch(role) { procs[role] = spawn(EXE, ['--tray'], { env: env(role), stdio: 'ignore', windowsHide: true }); procs[role].on('exit', c => { procs[role + 'Exit'] = c; }); }
 function cmd(role, line) {
@@ -176,6 +180,54 @@ await step('file transfer both ways, with a prompt on the receiving side (accept
   assert.ok(fs.readFileSync(d3).equals(fs.readFileSync(f3)));
 });
 
+await step('copied files (v1.5): both ways through the file transfer - one question per batch, the Mark of the Web, then on the receiver\'s clipboard; only while clipboard sharing is on', async () => {
+  cmd('host', 'test-clipboard on'); await until(() => T('viewer').clipboardAllowed === true, 5000, 'clipboard sharing on');
+  const src = path.join(WORK, 'copied'); fs.rmSync(src, { recursive: true, force: true }); fs.mkdirSync(path.join(src, 'a folder'), { recursive: true });
+  const a = path.join(src, 'copied-one.txt'), b = path.join(src, 'copied-two.bin');
+  fs.writeFileSync(a, 'COPIED-FILE-MARKER one'); fs.writeFileSync(b, Buffer.from(Array.from({ length: 90000 }, (_, i) => (i * 7) % 256)));
+  fs.writeFileSync(path.join(dirs.viewer, 'clipboard-files.txt'), [a, b, path.join(src, 'a folder')].join('\r\n'));
+  const p0 = T('host').filesPending;
+  assert.equal(cmd('viewer', 'test-view-sendcopied'), 'ok');
+  await until(() => T('host').filesPending === p0 + 1, 5000, 'the question on the PC');
+  await sleep(500); assert.equal(T('host').filesPending, p0 + 1, 'one question for both files');
+  assert.ok(T('host').log.some(l => l.includes('files offered: 2 (copied files)')));
+  const da = path.join(dirs.host, 'Downloads', 'copied-one.txt'), db = path.join(dirs.host, 'Downloads', 'copied-two.bin');
+  assert.ok(!fs.existsSync(da) && !fs.existsSync(db), 'nothing saved before Accept');
+  assert.ok(T('viewer').log.some(l => l.includes("Folders aren't sent")), 'the folder is skipped, and the helper is told');
+  cmd('host', 'test-file-answer accept');
+  await until(() => fs.existsSync(da) && fs.existsSync(db) && fs.statSync(db).size === 90000, 10000, 'both files on the PC');
+  assert.ok(fs.readFileSync(db).equals(fs.readFileSync(b))); assert.equal(fs.readFileSync(da, 'utf8'), 'COPIED-FILE-MARKER one');
+  assert.match(fs.readFileSync(da + ':Zone.Identifier', 'utf8'), /ZoneId=3/, 'Mark of the Web (SmartScreen)');
+  const hostClip = path.join(dirs.host, 'clipboard-files.txt');
+  await until(() => fs.existsSync(hostClip), 5000, "the files on the PC's clipboard");
+  assert.deepEqual(fs.readFileSync(hostClip, 'utf8').trim().split(/\r?\n/).sort(), [da, db].sort());
+  // the other way: the helper asks for the files copied on the PC
+  const c = path.join(src, 'from-the-pc.txt'); fs.writeFileSync(c, 'COPIED-ON-THE-PC');
+  fs.writeFileSync(hostClip, c);
+  const v0 = T('viewer').filesPending;
+  assert.equal(cmd('viewer', 'test-view-getcopied'), 'ok');
+  await until(() => T('viewer').filesPending === v0 + 1, 5000, 'the question on the helper');
+  await until(() => T('host').log.some(l => l.includes('asked for the files you copied')), 5000, 'the PC is told');
+  cmd('viewer', 'test-file-answer accept');
+  const dc = path.join(dirs.viewer, 'Downloads', 'from-the-pc.txt');
+  await until(() => fs.existsSync(dc) && fs.readFileSync(dc, 'utf8') === 'COPIED-ON-THE-PC', 10000, 'the file on the helper');
+  assert.match(fs.readFileSync(dc + ':Zone.Identifier', 'utf8'), /ZoneId=3/);
+  const viewClip = path.join(dirs.viewer, 'clipboard-files.txt');
+  await until(() => fs.readFileSync(viewClip, 'utf8').trim() === dc, 5000, "the file on the helper's clipboard");
+  // the PC sends its copied files itself (Send copied files on the red bar); declined this time
+  const d2 = path.join(src, 'declined-copy.txt'); fs.writeFileSync(d2, 'no'); fs.writeFileSync(hostClip, d2);
+  assert.equal(cmd('host', 'test-host-sendcopied'), 'ok');
+  await until(() => T('viewer').filesPending === v0 + 1, 5000, 'the question on the helper again');
+  cmd('viewer', 'test-file-answer decline'); await sleep(600);
+  assert.ok(!fs.existsSync(path.join(dirs.viewer, 'Downloads', 'declined-copy.txt')), 'nothing saved after Decline');
+  // clipboard sharing off: nothing either way
+  cmd('host', 'test-clipboard off'); await until(() => T('viewer').clipboardAllowed === false, 5000, 'clipboard sharing off');
+  assert.match(cmd('viewer', 'test-view-sendcopied'), /clipboard sharing/);
+  assert.match(cmd('viewer', 'test-view-getcopied'), /^error .*clipboard sharing/);
+  assert.match(cmd('host', 'test-host-sendcopied'), /clipboard sharing/);
+  await sleep(500); assert.equal(T('host').filesPending, p0); assert.equal(T('viewer').filesPending, v0);
+});
+
 await step('Stop control: input is ignored from then on and the helper is told', async () => {
   cmd('host', 'test-control off');
   await until(() => T('viewer').controlAllowed === false, 5000, 'control off at the viewer');
@@ -204,7 +256,7 @@ await step('panic hotkey (Ctrl+Alt+End path) disconnects at once; the bar goes a
 
 await step('the relay only ever forwarded ciphertext (no chat, clipboard, file content, JPEG or names)', async () => {
   const all = Buffer.concat(forwarded.map(f => f.data));
-  for (const s of ['hello from the helper', 'hello back', 'CLIP-FROM-HOST', 'CLIP-TO-HOST', 'FILE-CONTENT-MARKER', 'Test Helper', 'to-host.txt', 'JFIF', '"t":']) assert.equal(all.indexOf(s), -1, s);
+  for (const s of ['hello from the helper', 'hello back', 'CLIP-FROM-HOST', 'CLIP-TO-HOST', 'FILE-CONTENT-MARKER', 'COPIED-FILE-MARKER', 'COPIED-ON-THE-PC', 'copied-one.txt', 'Test Helper', 'to-host.txt', 'JFIF', '"t":']) assert.equal(all.indexOf(s), -1, s);
   assert.equal(all.indexOf(Buffer.from([0xff, 0xd8, 0xff, 0xe0])), -1, 'JPEG header');
   const sealed = forwarded.filter(f => f.data[0] === P.T.SEALED);
   assert.ok(sealed.length > 20);
@@ -481,6 +533,105 @@ await step('Wake-on-LAN (v1.4): one of Your PCs tells its owner its network adap
     await until(() => T('host').host === 'Waiting', 8000, 'unattended keeps waiting');
   } finally { cmd('host', 'test-unattended-off'); }
   await until(() => status('host').unattended === false, 5000, 'unattended off');
+});
+
+await step('Hallow Keys (v1.5): one of Your PCs gets its password from a Keys item (a stand-in hk.exe, never the real one); each exit code gives its message; the password is never stored or logged', async () => {
+  const PW = 'Keys-Test-Pass-77!';
+  fs.writeFileSync(HK_ITEMS, 'Office PC (Assist)\t' + PW + '\n');
+  const r = okJson(cmd('host', 'test-unattended-on ' + PW));
+  try {
+    await until(() => T('host').host === 'Waiting' && T('host').unattendedHost, 10000, 'unattended waiting');
+    assert.equal(cmd('viewer', 'test-savepc ' + r.code + ' Keys PC'), 'ok');
+    assert.match(cmd('viewer', 'test-connect-saved ' + r.code), /^error no password source/, 'no remembered key, no Keys item: type it');
+    assert.equal(cmd('viewer', 'test-pc-keys ' + r.code + ' Office PC (Assist)'), 'ok');
+    assert.equal(T('viewer').pcs.find(p => p.code === r.code).keysItem, 'Office PC (Assist)');
+    fs.writeFileSync(HK_LOG, '');
+    assert.equal(cmd('viewer', 'test-connect-saved ' + r.code), 'ok');
+    await until(() => { const v = T('viewer'); return v.fromKeys && v.viewer === 'Connected' && v.frames > 0; }, 15000, 'connected with the password from Keys');
+    assert.equal(T('viewer').keys, 'ok');
+    assert.equal(fs.readFileSync(HK_LOG, 'utf8').trim(), '--get | Office PC (Assist) | --field | password');
+    for (const f of ['settings.json', 'status.json', 'history.json']) { const p = path.join(dirs.viewer, f); if (fs.existsSync(p)) assert.ok(!fs.readFileSync(p, 'utf8').includes(PW), 'not in ' + f); }
+    assert.ok(!JSON.stringify(status('viewer')).includes(PW), 'not in the log or status');
+    cmd('host', 'disconnect'); await until(() => T('viewer').viewer === 'Ended', 5000, 'ended');
+    await until(() => T('host').host === 'Waiting', 8000, 'waiting again');
+    const msgs = { 1: "didn't understand", 2: 'Start Hallow Keys and try again', 3: 'Unlock Hallow Keys and try again', 4: 'has no item called', 5: 'Hallow Keys said no', 6: 'Turn on the command line in Keys > Settings > Developer tools', 7: "couldn't give the password" };
+    for (const [c, text] of Object.entries(msgs)) {
+      assert.equal(cmd('viewer', `test-pc-keys ${r.code} code-${c}`), 'ok');
+      assert.equal(cmd('viewer', 'test-connect-saved ' + r.code), 'ok');
+      await until(() => (T('viewer').keys || '').startsWith('code ' + c + ':'), 8000, 'exit ' + c);
+      assert.ok(T('viewer').keys.includes(text), T('viewer').keys);
+      assert.equal(T('viewer').viewer, 'Ended', 'no session without the password');
+    }
+    cmd('viewer', `test-pc-keys ${r.code} hang`); cmd('viewer', 'test-connect-saved ' + r.code);
+    await until(() => (T('viewer').keys || '').startsWith('code -2:'), 12000, 'no answer: stopped after the timeout');
+    // a wrong password in Keys: the connection fails and the message points at the item
+    fs.writeFileSync(HK_ITEMS, 'Office PC (Assist)\tnot-the-right-one-1\n');
+    cmd('viewer', `test-pc-keys ${r.code} Office PC (Assist)`); cmd('viewer', 'test-connect-saved ' + r.code);
+    await until(() => T('viewer').log.some(l => l.includes('The password Hallow Keys gave')), 12000, 'wrong password from Keys');
+  } finally { cmd('host', 'test-unattended-off'); }
+  await until(() => status('host').unattended === false, 5000, 'unattended off');
+});
+
+const vids = path.join(dirs.viewer, 'Videos');
+const recFiles = () => fs.existsSync(vids) ? fs.readdirSync(vids).filter(f => !f.includes('.part.')) : [];
+await step('session recording (v1.5): off by default; starts only after the PC confirms "Recording" on its red bar (before the first recorded frame); picture and sound in the file; Stop recording on the bar stops it', async () => {
+  sess = await newHostSession();
+  await connectViewer(sess.code, sess.password); await until(() => T('host').consentPending, 10000, 'consent');
+  cmd('host', 'test-consent allow control'); await until(() => T('viewer').frames > 0, 10000, 'frames');
+  assert.equal(T('viewer').rec, 'Off'); assert.doesNotMatch(T('host').barText, /Recording/); assert.equal(recFiles().length, 0);
+  cmd('viewer', 'test-view-sound on'); cmd('host', 'test-host-sound on');
+  await until(() => T('viewer').audioPackets > 10, 8000, 'sound flowing');
+  assert.equal(cmd('viewer', 'test-view-rec on'), 'ok');
+  await until(() => T('viewer').rec === 'On', 5000, 'recording');
+  const h = T('host'); assert.match(h.barText, /Recording/); assert.equal(h.recNotice, true);
+  await until(() => T('viewer').recFrames >= 15, 10000, 'frames recorded');
+  const v = T('viewer');
+  assert.ok(h.recNoticeAt > 0 && v.recFirstFrameAt > 0 && h.recNoticeAt <= v.recFirstFrameAt, `the notice (${h.recNoticeAt}) came before the first recorded frame (${v.recFirstFrameAt})`);
+  await sleep(5000); assert.equal(T('viewer').rec, 'On', 'kept going while the PC keeps confirming');
+  cmd('viewer', 'test-view-rec off');
+  await until(() => T('viewer').recPath && fs.existsSync(T('viewer').recPath), 20000, 'the file');
+  await until(() => !/Recording/.test(T('host').barText), 5000, 'the notice goes away');
+  const file = T('viewer').recPath, kind = process.env.HALLOW_ASSIST_FFMPEG ? 'mp4' : 'avi';
+  assert.ok(file.startsWith(vids) && file.endsWith('.' + kind) && path.basename(file).includes(sess.code.slice(0, 3)), file); assert.equal(T('viewer').recKind, kind);
+  const buf = fs.readFileSync(file);
+  if (kind === 'avi') {
+    assert.equal(buf.toString('ascii', 0, 4), 'RIFF'); assert.equal(buf.toString('ascii', 8, 12), 'AVI '); assert.equal(buf.readUInt32LE(4), buf.length - 8);
+    assert.ok(buf.readUInt32LE(48) >= 50, 'about 10 frames a second: ' + buf.readUInt32LE(48));
+    const first = buf.indexOf('00dc', 4108); assert.ok(first > 0 && buf[first + 8] === 0xff && buf[first + 9] === 0xd8, 'the first frame is a JPEG');
+    assert.ok(buf.indexOf('auds') > 0 && buf.indexOf('01wb', 4108) > 0, 'their sound is in it');
+  } else assert.equal(buf.toString('ascii', 4, 8), 'ftyp');
+  fs.writeFileSync(path.join(WORK, 'recording.txt'), `${path.basename(file)} ${buf.length} bytes\n`);
+  cmd('viewer', 'test-view-sound off'); cmd('host', 'test-host-sound off');
+  // the person helped presses Stop recording on the red bar
+  const before = recFiles().length;
+  cmd('viewer', 'test-view-rec on'); await until(() => T('viewer').rec === 'On', 5000, 'recording again');
+  await until(() => T('viewer').recFrames > 3, 5000, 'a few frames');
+  cmd('host', 'test-host-rec-stop');
+  await until(() => T('viewer').rec === 'Off', 5000, 'stopped by the PC');
+  await until(() => T('viewer').log.some(l => l.includes('They stopped the recording')) && recFiles().length === before + 1, 20000, 'the helper is told and the file is kept');
+  assert.doesNotMatch(T('host').barText, /Recording/);
+});
+
+await step("session recording (v1.5): never starts when the notice can't be shown on the PC, stops when the PC stops confirming it, and stops when the session ends", async () => {
+  const n0 = recFiles().length;
+  cmd('host', 'test-rec-noshow on');
+  cmd('viewer', 'test-view-rec on');
+  await until(() => T('viewer').rec === 'Off' && T('viewer').log.some(l => l.includes("didn't confirm")), 10000, 'gives up without a confirmation');
+  assert.equal(T('host').recNotice, false); await until(() => T('host').recording === false, 5000, 'the request is withdrawn'); await sleep(300); assert.equal(recFiles().length, n0, 'no file');
+  cmd('host', 'test-rec-noshow off');
+  cmd('viewer', 'test-view-rec on'); await until(() => T('viewer').rec === 'On', 5000, 'recording');
+  await until(() => T('viewer').recFrames > 5, 5000, 'frames');
+  cmd('host', 'test-rec-noshow on');   // the bar can't say Recording any more: the confirmations stop
+  await until(() => T('viewer').rec === 'Off', 10000, 'stops without confirmations');
+  assert.ok(T('viewer').log.some(l => l.includes('stopped confirming')));
+  await until(() => recFiles().length === n0 + 1, 20000, 'what was recorded while the notice showed is kept');
+  cmd('host', 'test-rec-noshow off');
+  cmd('viewer', 'test-view-rec on'); await until(() => T('viewer').rec === 'On', 5000, 'recording once more');
+  await until(() => T('viewer').recFrames > 3, 5000, 'frames');
+  cmd('host', 'disconnect');
+  await until(() => T('viewer').viewer === 'Ended' && T('viewer').rec === 'Off', 8000, 'the session ended, so did the recording');
+  await until(() => recFiles().length === n0 + 2, 20000, 'the file is finished');
+  assert.ok(T('viewer').log.some(l => l.includes('recording saved')));
 });
 
 await step('closing the app (host) ends a connected session; the helper is told', async () => {

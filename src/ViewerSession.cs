@@ -25,6 +25,8 @@ namespace HallowAssist
         public long Frames, FrameBytes; public int RttMs;
         public Transfers Files;
         public IClip Clip; public volatile bool ClipSync; string lastClip;
+        public IFileClip FileClip;   // v1.5: copied files
+        public bool FromKeys;        // v1.5: the key was made from a password Hallow Keys gave (one of Your PCs)
         int ended;
 
         public event Action Changed;
@@ -51,6 +53,13 @@ namespace HallowAssist
             this.relay = relay; this.code = Kdf.NormCode(code); this.password = password; this.name = string.IsNullOrWhiteSpace(name) ? "Helper" : name.Trim();
             Files = new Transfers(p => SendPlain(p), () => { var t = tx; return t != null ? t.Queued : link == null ? 0 : link.Queued; }, () => State == ViewerState.Connected, Transfers.DownloadFolder());
             Files.Note += s => Say(s);
+            // v1.5: copied files that arrived go on this PC's clipboard too (only while they share their clipboard)
+            Files.BatchReceived += (paths, clip) =>
+            {
+                if (!clip || !ClipboardAllowed || FileClip == null || State != ViewerState.Connected) return;
+                FileClip.SetFiles(paths);
+                Say((paths.Length == 1 ? "The file is" : "The " + paths.Length + " files are") + " on your clipboard too - paste with Ctrl+V into any folder.");
+            };
         }
         void Fire() { var h = Changed; if (h != null) try { h(); } catch { } }
         void Say(string s) { var h = Note; if (h != null) try { h(s); } catch { } }
@@ -79,6 +88,7 @@ namespace HallowAssist
             {
                 Thread.Sleep(1000);
                 if (State != ViewerState.Connected) continue;
+                CheckRecording();
                 if (Environment.TickCount % 2000 < 1000) SendJson("t", "ping", "ts", (long)(DateTime.UtcNow - new DateTime(1970, 1, 1)).TotalMilliseconds);
                 if (ClipSync && ClipboardAllowed && Clip != null)
                 {
@@ -125,7 +135,7 @@ namespace HallowAssist
                 chan = new Channel(keys, false); Safety = keys.Safety; State = ViewerState.Waiting;
                 var tr = new Transport(link); tr.Deliver = OnSealed; tr.Overflow = r => DirectFailed(r); tx = tr;
                 Status = "Connected securely. Waiting for them to click Allow...";
-                SendJson("t", "hello", "name", name.Length > 40 ? name.Substring(0, 40) : name, "client", "app", "version", Program.Version);
+                SendJson("t", "hello", "name", name.Length > 40 ? name.Substring(0, 40) : name, "client", "app", "version", Program.Version, "files2", true);
                 Fire(); return;
             }
             End("Unexpected message - closed to be safe.", false);
@@ -194,6 +204,7 @@ namespace HallowAssist
                     if (!Msg.Bool(m, "allowed")) { End("They said no.", false); return; }
                     ControlAllowed = Msg.Bool(m, "control"); ClipboardAllowed = Msg.Bool(m, "clipboard"); HostName = Msg.Str(m, "host"); HostUnattended = Msg.Bool(m, "unattended");
                     HostSharesSound = Msg.Bool(m, "sound"); HostHasSound = Msg.Bool(m, "soundAvailable");
+                    Files.PeerBatches = Msg.Bool(m, "files2"); HostCanRecord = Msg.Bool(m, "rec");   // v1.5
                     var list = new List<MonitorInfo>();
                     object mo; if (m.TryGetValue("monitors", out mo) && mo is System.Collections.ArrayList)
                         foreach (var x in (System.Collections.ArrayList)mo) { var d = x as Dictionary<string, object>; if (d != null) list.Add(new MonitorInfo { W = (int)Msg.Num(d, "w"), H = (int)Msg.Num(d, "h"), Primary = Msg.Bool(d, "primary") }); }
@@ -220,6 +231,9 @@ namespace HallowAssist
                 case "sound": HostSharesSound = Msg.Bool(m, "on"); if (!HostSharesSound) { var pl = Player; if (pl != null) pl.Stop(); } Fire(); break;
                 case "restarting": Restarting = true; Status = "Their PC is restarting - Hallow Assist reconnects when it's back."; Fire(); break;
                 case "note": { var t = Msg.Str(m, "text"); if (!string.IsNullOrEmpty(t)) Say(t); break; }
+                // v1.5: their red bar shows "Recording" (first time: recording may start; then every few seconds: it still does)
+                case "rec-ok": OnRecOk(); break;
+                case "rec": if (!Msg.Bool(m, "on") && Rec != RecState.Off) StopRecording("They stopped the recording.", false); break;
                 default: Files.Handle(m); break;
             }
         }
@@ -239,7 +253,9 @@ namespace HallowAssist
             AudioMsg a; try { a = AudioMsg.Parse(p); } catch { return; }
             if (a.SampleRate != AudioMsg.Rate) return;
             AudioPackets++;
-            var pl = Player; if (pl != null) try { pl.Play(a.ToPcm()); } catch { }
+            var pcm = a.ToPcm();
+            var pl = Player; if (pl != null) try { pl.Play(pcm); } catch { }
+            var r = recorder; if (r != null) try { r.AddAudio(pcm); } catch { }
         }
 
         void OnFrame(byte[] p)
@@ -253,7 +269,7 @@ namespace HallowAssist
                 Monitor = f.Mon;
                 foreach (var t in f.Tiles) { try { var r = Screen.Apply(t); area = area.IsEmpty ? r : Rectangle.Union(area, r); } catch { } }
             }
-            Frames++; FrameBytes += p.Length;
+            FrameBytes += p.Length; Frames++;
             SendJson("t", "ack", "seq", f.Seq);
             var h = Painted; if (h != null && !area.IsEmpty) h(area);
         }
@@ -276,6 +292,105 @@ namespace HallowAssist
         public void SendChat(string t) { if (State == ViewerState.Connected && !string.IsNullOrWhiteSpace(t)) SendJson("t", "chat", "text", t); }
         public void SendClip(string t) { if (State == ViewerState.Connected && ClipboardAllowed && t != null) SendJson("t", "clip", "text", t); }
         public string SendFile(string path) { if (State != ViewerState.Connected) return "Not connected."; return Files.Offer(path); }
+        // v1.5: copied files, both ways (only while they share their clipboard; the receiving side is asked first)
+        public string SendCopiedFiles()
+        {
+            if (State != ViewerState.Connected) return "Not connected.";
+            if (!ClipboardAllowed) return "They haven't turned on clipboard sharing.";
+            if (FileClip == null) return "Copied files aren't available here.";
+            return Files.OfferMany(FileClip.GetFiles(), true);
+        }
+        public string GetCopiedFiles()
+        {
+            if (State != ViewerState.Connected) return "Not connected.";
+            if (!ClipboardAllowed) return "They haven't turned on clipboard sharing.";
+            if (!Files.PeerBatches) return "Their Hallow Assist is older than 1.5 - it can't send copied files yet.";
+            SendJson("t", "clip-files-get"); return "Asked for the files they copied - you're asked before anything is saved.";
+        }
+
+        // ---- v1.5: session recording (this side only, off until you click Record). It starts only after their PC confirms
+        // that its red bar says "Recording", and stops when they press Stop recording, the confirmations stop, or the session ends.
+        public enum RecState { Off, Asking, On }
+        public volatile RecState Rec = RecState.Off; public bool HostCanRecord;
+        SessionRecorder recorder; DateTime recAsked, recLastOk; public DateTime RecStarted;
+        public string RecFolder = SessionRecorder.DefaultFolder(), RecLastPath, RecLastKind, RecLabel; public long RecFirstFrameAt, RecFrames;
+        public event Action<string> RecordingSaved;   // full path
+        readonly object recGate = new object();
+        public static int RecAskMs { get { return AssistSettings.TestDir != null ? 3000 : 10000; } }
+        public static int RecStaleMs { get { return AssistSettings.TestDir != null ? 4000 : 10000; } }
+        public string StartRecording()
+        {
+            if (State != ViewerState.Connected) return "Not connected.";
+            lock (recGate)
+            {
+                if (Rec != RecState.Off) return null;
+                Rec = RecState.Asking; recAsked = DateTime.UtcNow;
+            }
+            SendJson("t", "rec", "on", true);
+            Say("Asking their PC to show \u201cRecording\u201d on its red bar - recording starts once it does.");
+            Fire(); return null;
+        }
+        void OnRecOk()
+        {
+            SessionRecorder r = null;
+            lock (recGate)
+            {
+                if (Rec == RecState.On) { recLastOk = DateTime.UtcNow; return; }
+                if (Rec != RecState.Asking || State != ViewerState.Connected) return;
+                r = new SessionRecorder(RecFolder, RecLabel ?? HostName ?? Ui.FormatCode(code), SessionRecorder.FindFfmpeg(), ver =>
+                {
+                    if (Frames == ver) return null;
+                    lock (ScreenLock)
+                    {
+                        if (Screen.W == 0) return null;
+                        return new RecFrame { Pixels = (byte[])Screen.Pixels.Clone(), W = Screen.W, H = Screen.H, Version = Frames };
+                    }
+                });
+                var err = r.Start();
+                if (err != null) { Rec = RecState.Off; r = null; SendJson("t", "rec", "on", false); Say("Couldn't record: " + err); Fire(); return; }
+                recorder = r; Rec = RecState.On; recLastOk = DateTime.UtcNow; RecStarted = DateTime.Now; RecFirstFrameAt = 0; RecFrames = 0;
+            }
+            Say("Recording - their red bar says so. It's saved in " + RecFolder + " on this PC.");
+            Fire();
+        }
+        void CheckRecording()
+        {
+            var r = recorder;
+            if (r != null) { RecFrames = r.FramesWritten; if (RecFirstFrameAt == 0 && r.Started) RecFirstFrameAt = (long)(r.FirstFrameAt - new DateTime(1970, 1, 1)).TotalMilliseconds; }
+            if (Rec == RecState.Asking && (DateTime.UtcNow - recAsked).TotalMilliseconds > RecAskMs)
+            {
+                lock (recGate) { if (Rec != RecState.Asking) return; Rec = RecState.Off; }
+                SendJson("t", "rec", "on", false);
+                Say(HostCanRecord ? "Their PC didn't confirm that its red bar says Recording, so nothing was recorded." : "Their Hallow Assist is older than 1.5 and can't show that you're recording, so nothing was recorded.");
+                Fire(); return;
+            }
+            if (Rec == RecState.On && (DateTime.UtcNow - recLastOk).TotalMilliseconds > RecStaleMs) { StopRecording("Stopped recording: their PC stopped confirming that its red bar says Recording.", true); return; }
+            if (Rec == RecState.On && r != null && !r.Running) StopRecording(r.Error ?? "The recording stopped.", true);
+            if (Rec == RecState.On) Fire();   // the elapsed time on the button
+        }
+        // stops and finishes the file in the background (FFmpeg can take a few seconds)
+        public void StopRecording(string why, bool tellPeer)
+        {
+            SessionRecorder r;
+            lock (recGate)
+            {
+                if (Rec == RecState.Off) return;
+                var was = Rec; Rec = RecState.Off; r = recorder; recorder = null;
+                if (was == RecState.Asking) r = null;
+            }
+            if (tellPeer && State == ViewerState.Connected) SendJson("t", "rec", "on", false);
+            Fire();
+            if (r == null) { if (why != null) Say(why); return; }
+            new Thread(() =>
+            {
+                string path = null; try { path = r.Stop(); } catch (Exception e) { r.Error = e.Message; }
+                RecFrames = r.FramesWritten; if (RecFirstFrameAt == 0 && r.Started) RecFirstFrameAt = (long)(r.FirstFrameAt - new DateTime(1970, 1, 1)).TotalMilliseconds;
+                RecLastKind = r.Kind; RecLastPath = path;
+                Say((why ?? "Recording stopped.") + (path != null ? " Saved " + System.IO.Path.GetFileName(path) + " in " + System.IO.Path.GetDirectoryName(path) + "." : " Nothing was recorded.") + (r.Error != null && why != r.Error ? " " + r.Error : ""));
+                var h = RecordingSaved; if (h != null && path != null) try { h(path); } catch { }
+                Fire();
+            }) { IsBackground = true, Name = "recording finish" }.Start();
+        }
 
         public void End(string reason, bool tellPeer)
         {
@@ -284,6 +399,7 @@ namespace HallowAssist
             State = ViewerState.Ended; EndReason = reason; Status = reason;
             Files.CancelAll();
             SoundOn = false; { var pl = Player; if (pl != null) try { pl.Stop(); } catch { } }
+            StopRecording("The session ended, so the recording stopped.", false);   // v1.5
             var dl = direct; direct = null; if (dl != null) { dl.Drain(1500); dl.Close("session ended"); }   // "bye" first, then the relay
             if (link != null) link.Close(reason);
             if (ecdh != null) ecdh.Dispose();

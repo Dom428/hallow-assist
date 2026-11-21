@@ -5,3 +5,4 @@ tests/out/
 server/node_modules/
 server/deploy.env
 package/HallowAssist.exe
+tests/standin/*.exe

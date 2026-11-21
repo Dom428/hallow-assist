@@ -81,6 +81,7 @@ namespace HallowAssist
             {
                 getHelp.Children.Add(Ui.T(h.HelperName + " is connected" + (h.Control ? " and can use your mouse and keyboard." : " and can see your screen."), 14, true, null, 6));
                 getHelp.Children.Add(Ui.Muted("Safety code " + h.Safety + ". The red bar at the top of your screen shows this too. Ctrl+Alt+End disconnects at once.", 12.5, 10));
+                if (h.RecordingAsked) getHelp.Children.Add(Ui.T("\u25cf " + h.HelperName + " is recording this session on their PC - Stop recording is on the red bar.", 12.5, true, Ui.Red, 10));   // v1.5
                 var db = Ui.Btn("Disconnect", () => c.StopHost("You disconnected."), true); db.HorizontalAlignment = HorizontalAlignment.Left; getHelp.Children.Add(db);
                 return;
             }
@@ -124,7 +125,7 @@ namespace HallowAssist
                 {
                     // already one of Your PCs, password typed this time: offer to remember it (only after it worked)
                     var known = c.S.FindPc(v.Code);
-                    if (v.State == ViewerState.Connected && known != null && known.Key == null && !v.UsedSavedKey && !v.OneTimePassword && v.PasswordKey != null)
+                    if (v.State == ViewerState.Connected && known != null && known.Key == null && known.KeysItem == null && !v.UsedSavedKey && !v.OneTimePassword && v.PasswordKey != null)
                     {
                         var rem = Ui.Btn("Remember the password for " + known.Name, () =>
                         {
@@ -192,11 +193,16 @@ namespace HallowAssist
             {
                 var p = pc;
                 var row = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
-                var forget = Ui.Btn("Forget", () =>
-                {
-                    if (MessageBox.Show(this, "Remove " + p.Name + " from Your PCs?" + (p.Key != null ? " Its remembered password goes too." : ""), "Hallow Assist", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes) c.ForgetPc(p.Code);
-                });
-                forget.Margin = new Thickness(6, 0, 0, 0); DockPanel.SetDock(forget, Dock.Right); row.Children.Add(forget);
+                // v1.5: Password... (typed, remembered, Hallow Keys) and Forget live in a small menu, so the row stays readable
+                var more = Ui.Btn("\u22ef", null); more.ToolTip = "Password, Forget"; more.Margin = new Thickness(6, 0, 0, 0); more.VerticalAlignment = VerticalAlignment.Center;
+                var menu = new ContextMenu();
+                var miPw = new MenuItem { Header = "Password..." };
+                miPw.Click += (s, e) => { var d = new PcPasswordDialog(p) { Owner = this }; if (d.ShowDialog() == true) { c.SetPcPassword(p.Code, d.Mode, d.Item); Say(d.Mode == "keys" ? p.Name + " gets its password from Hallow Keys (item \u201c" + d.Item + "\u201d)." : "Saved."); } };
+                var miForget = new MenuItem { Header = "Forget" };
+                miForget.Click += (s, e) => { if (MessageBox.Show(this, "Remove " + p.Name + " from Your PCs?" + (p.Key != null ? " Its remembered password goes too." : ""), "Hallow Assist", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes) c.ForgetPc(p.Code); };
+                menu.Items.Add(miPw); menu.Items.Add(miForget);
+                more.ContextMenu = menu; more.Click += (s, e) => { menu.PlacementTarget = more; menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom; menu.IsOpen = true; };
+                DockPanel.SetDock(more, Dock.Right); row.Children.Add(more);
                 var connect = Ui.Btn("Connect", () =>
                 {
                     if (c.ConnectSaved(p)) return;
@@ -204,7 +210,7 @@ namespace HallowAssist
                     helpStatus.Text = "Type the unattended password for " + p.Name + "."; helpStatus.Foreground = Ui.R("Muted");
                     pw.Focus();
                 }, true);
-                connect.IsEnabled = canGo; DockPanel.SetDock(connect, Dock.Right); row.Children.Add(connect);
+                connect.IsEnabled = canGo && !c.AskingKeys; connect.VerticalAlignment = VerticalAlignment.Center; DockPanel.SetDock(connect, Dock.Right); row.Children.Add(connect);
                 // v1.4: Wake-on-LAN, once this PC's network adapter is known (learned in an unattended session)
                 if (Wol.ParseMac(p.Mac) != null)
                 {
@@ -213,7 +219,7 @@ namespace HallowAssist
                     var wake = Ui.Btn(waking ? "Stop waiting" : "Wake", () => { if (c.Waking(p.Code)) c.CancelWake(); else c.Wake(p); });
                     wake.ToolTip = "Wake " + p.Name + " from sleep or off (Wake-on-LAN, network adapter " + Wol.ShowMac(p.Mac) + "). Only works on the same network as this PC, with Wake-on-LAN turned on in its BIOS and its network adapter's settings.";
                     wake.IsEnabled = waking || st != "online";
-                    wake.Margin = new Thickness(0, 0, 6, 0); DockPanel.SetDock(wake, Dock.Right); row.Children.Add(wake);
+                    wake.Margin = new Thickness(0, 0, 6, 0); wake.VerticalAlignment = VerticalAlignment.Center; DockPanel.SetDock(wake, Dock.Right); row.Children.Add(wake);
                 }
                 var info = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 12, 0) };
                 var nameText = Ui.T(p.Name, 13, true); nameText.TextTrimming = TextTrimming.CharacterEllipsis;
@@ -222,8 +228,8 @@ namespace HallowAssist
                 dots[p.Code] = dot; PaintDot(dot, p.Code);
                 var nameRow = new DockPanel(); DockPanel.SetDock(dot, Dock.Left); nameRow.Children.Add(dot); nameRow.Children.Add(nameText);
                 info.Children.Add(nameRow);
-                var detail = Ui.Muted(Ui.FormatCode(p.Code) + (p.Key != null ? "  -  remembered" : "  -  type the password"), 11.5); detail.TextTrimming = TextTrimming.CharacterEllipsis; info.Children.Add(detail);
-                info.ToolTip = p.Key != null ? "The password is remembered on this PC (as an encrypted key)." : "You type the password each time.";
+                var detail = Ui.Muted(Ui.FormatCode(p.Code) + (p.KeysItem != null ? "  -  from Hallow Keys: " + p.KeysItem : p.Key != null ? "  -  remembered" : "  -  type the password"), 11.5); detail.TextTrimming = TextTrimming.CharacterEllipsis; info.Children.Add(detail);
+                info.ToolTip = p.KeysItem != null ? "Password from Hallow Keys: " + p.KeysItem + " (you approve it in Keys each time; it's never stored here)." : p.Key != null ? "The password is remembered on this PC (as an encrypted key)." : "You type the password each time.";
                 row.Children.Add(info);
                 helpSomeone.Children.Add(row);
             }
@@ -266,10 +272,23 @@ namespace HallowAssist
             if (c.S.Unattended) ub.Children.Add(Ui.Switch("Share this PC's sound in unattended sessions (you can still stop it on the red bar) - off by default", c.S.SoundUnattended, v => { c.S.SoundUnattended = v; c.S.Save(); }));
             sp.Children.Add(ub);
             sp.Children.Add(Ui.Switch("Connect directly when both PCs are on the same network - faster and smoother (the helper's PC may ask once to allow Hallow Assist on private networks)", !c.S.DirectOff, v => { c.S.DirectOff = !v; c.S.Save(); }));
-            var row = Ui.Row(Ui.Btn("Check for updates", () => c.CheckForUpdate(true)), Ui.Btn("Connection history", () => c.ShowHistory()), Ui.Btn("Open downloads folder", () => { try { System.IO.Directory.CreateDirectory(Transfers.DownloadFolder()); System.Diagnostics.Process.Start("explorer.exe", "\"" + Transfers.DownloadFolder() + "\""); } catch { } }));
+            // v1.5: where received files go
+            var rf = new DockPanel { Margin = new Thickness(0, 6, 0, 0) };
+            var rl = Ui.Muted("Received files", 12.5); rl.Width = 110; rl.VerticalAlignment = VerticalAlignment.Center; DockPanel.SetDock(rl, Dock.Left); rf.Children.Add(rl);
+            var reset = Ui.Btn("Downloads", () => { c.S.ReceiveFolder = null; c.S.Save(); Build(); }); reset.ToolTip = "Back to Downloads\\Hallow Assist"; reset.Margin = new Thickness(6, 0, 0, 0); DockPanel.SetDock(reset, Dock.Right); rf.Children.Add(reset);
+            var pick = Ui.Btn("Change...", () =>
+            {
+                using (var d = new System.Windows.Forms.FolderBrowserDialog { Description = "Where should files you receive go?", SelectedPath = c.S.ReceiveDir() })
+                    if (d.ShowDialog() == System.Windows.Forms.DialogResult.OK && System.IO.Directory.Exists(d.SelectedPath)) { c.S.ReceiveFolder = d.SelectedPath; c.S.Save(); Build(); }
+            });
+            pick.Margin = new Thickness(8, 0, 0, 0); DockPanel.SetDock(pick, Dock.Right); rf.Children.Add(pick);
+            var rp = Ui.T(Snap.On ? @"C:\Users\you\Downloads\Hallow Assist" : c.S.ReceiveDir(), 12.5); rp.VerticalAlignment = VerticalAlignment.Center; rp.TextTrimming = TextTrimming.CharacterEllipsis; rf.Children.Add(rp);   // --snap: never a real path
+            sp.Children.Add(rf);
+            var row = Ui.Row(Ui.Btn("Check for updates", () => c.CheckForUpdate(true)), Ui.Btn("Connection history", () => c.ShowHistory()), Ui.Btn("Open received files", () => OpenFolder(c.S.ReceiveDir())), Ui.Btn("Open recordings", () => OpenFolder(SessionRecorder.DefaultFolder())));
             row.Margin = new Thickness(0, 8, 0, 8); sp.Children.Add(row);
             return sp;
         }
+        static void OpenFolder(string dir) { try { System.IO.Directory.CreateDirectory(dir); System.Diagnostics.Process.Start("explorer.exe", "\"" + dir + "\""); } catch { } }
         string UnattendedText()
         {
             if (!c.S.Unattended) return "Off. Nobody can connect to this PC unless you click Get help and then Allow.";

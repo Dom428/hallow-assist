@@ -20,8 +20,8 @@ GETTING HELP
 HELPING SOMEONE
 - Type their code and password under Help someone - or open your relay's address in
   any browser (phone, tablet, TV, another PC).
-- Mouse and keyboard (if they allowed it), their monitors, chat, copied text, files
-  both ways (they're asked first), picture quality.
+- Mouse and keyboard (if they allowed it), their monitors, chat, copied text and copied
+  files, files both ways (they're asked first), picture quality, recording on your PC.
 - Ctrl+Alt+Del and admin (UAC) prompts can't be used remotely: they click those themselves.
 
 UNATTENDED ACCESS (your own PCs only)
@@ -32,6 +32,18 @@ UNATTENDED ACCESS (your own PCs only)
 PRIVACY
 - End-to-end encrypted: your relay passes sealed messages along and can't see screens,
   keys, chat or files. Crash reports stay on this PC. Nothing else is sent anywhere.
+
+WHAT'S NEW IN 1.5
+- Your PCs can get their password from Hallow Keys (2.6 or newer): ... > Password... > "Password from
+  Hallow Keys" and the item's name. You approve each use in Keys; the password is used once and wiped,
+  never stored or logged. Turn on Keys > Settings > Developer tools > command line first.
+- Copied files both ways while clipboard sharing is on: "Send the files I copied" / "Copy their files here"
+  in the viewer, "Send copied files" on the red bar. One question for all the files; afterwards they're
+  on the receiver's clipboard too (Ctrl+V in any folder). Same safety rules as other files.
+- Session recording on the helper's PC (off until you click Record): Videos\Hallow Assist, MP4 with
+  Hallow Clips' FFmpeg if it's there, otherwise AVI. The person helped sees "Recording" on the red bar
+  the whole time and can press Stop recording; it never starts without that notice.
+- Settings: pick where received files go.
 
 WHAT'S NEW IN 1.4
 - Wake-on-LAN for Your PCs: after one unattended session your app knows that PC's network adapter, and

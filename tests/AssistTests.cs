@@ -10,7 +10,7 @@ using System.Security.Cryptography;
 
 namespace HallowAssist.Tests
 {
-    public static class Run
+    public static partial class Run
     {
         static int pass, fail;
         static void Ok(bool c, string name) { if (c) { pass++; Console.WriteLine("ok   " + name); } else { fail++; Console.WriteLine("FAIL " + name); } }
@@ -24,7 +24,7 @@ namespace HallowAssist.Tests
             if (args.Length >= 3 && args[0] == "--pwkey") { Console.WriteLine(Hex(Kdf.PasswordKey(args[1], args[2]))); return 0; }
             if (args.Contains("--wasapi-smoke")) return WasapiSmoke();
             if (args.Contains("--waveout-smoke")) return WaveOutSmoke();
-            try { Crypto(); Channels(); Tiles(); Inputs(); Protocol(); Misc(); V14(); }
+            try { Crypto(); Channels(); Tiles(); Inputs(); Protocol(); Misc(); V14(); V15(); }
             catch (Exception e) { fail++; Console.WriteLine("FAIL exception: " + e); }
             Console.WriteLine(pass + " passed, " + fail + " failed");
             return fail == 0 ? 0 : 1;
