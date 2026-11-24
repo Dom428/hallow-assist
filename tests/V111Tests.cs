@@ -89,7 +89,9 @@ namespace HallowAssist.Tests
             var st3 = (AssistSettings)ser.ReadObject(new MemoryStream(System.Text.Encoding.UTF8.GetBytes("{\"RelayUrl\":\"\"}")));
             typeof(AssistSettings).GetMethod("Fix", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(st3, null);
             Ok(st3.AppLook == "hallow", "settings: an old settings.json -> Follow Hallow");
-            Ok(Program.Version == "1.12", "version 1.12");
+            // not pinned to one release: at least 1.12 (where these checks came in), and the same as the built assembly
+            var asm = typeof(Program).Assembly.GetName().Version;
+            Ok(new Version(Program.Version) >= new Version(1, 12) && asm.ToString().StartsWith(Program.Version), "version " + Program.Version + " (at least 1.12, assembly " + asm + ")");
         }
     }
 }

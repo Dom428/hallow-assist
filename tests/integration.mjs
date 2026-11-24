@@ -584,7 +584,7 @@ await step('browser viewer in headless Edge (phone, landscape): connect, consent
   sess = await newHostSession();
   const prof = path.join(WORK, 'edge-profile'); fs.rmSync(prof, { recursive: true, force: true });
   const dport = 9300 + Math.floor(Math.random() * 500);
-  const edge = spawn(EDGE, ['--headless=new', `--remote-debugging-port=${dport}`, `--user-data-dir=${prof}`, '--no-first-run', '--no-default-browser-check', '--disable-extensions', '--disable-sync', 'about:blank'], { stdio: 'ignore', windowsHide: true });
+  const edge = spawn(EDGE, ['--headless=new', `--remote-debugging-port=${dport}`, `--user-data-dir=${prof}`, '--no-first-run', '--no-default-browser-check', '--disable-extensions', '--disable-sync', '--mute-audio', 'about:blank'], { stdio: 'ignore', windowsHide: true });
   try {
     const c = await cdp(dport);
     await c.send('Emulation.setDeviceMetricsOverride', { width: 844, height: 390, deviceScaleFactor: 2, mobile: true, screenOrientation: { type: 'landscapePrimary', angle: 90 } });
@@ -830,7 +830,8 @@ await step("session recording (v1.5): never starts when the notice can't be show
   await until(() => T('viewer').recFrames > 5, 5000, 'frames');
   cmd('host', 'test-rec-noshow on');   // the bar can't say Recording any more: the confirmations stop
   await until(() => T('viewer').rec === 'Off', 10000, 'stops without confirmations');
-  assert.ok(T('viewer').log.some(l => l.includes('stopped confirming')));
+  // the helper's note comes once the file is finished (it names the file), which can take a few seconds after Rec turns Off
+  await until(() => T('viewer').log.some(l => l.includes('stopped confirming')), 20000, 'the helper is told the PC stopped confirming');
   await until(() => recFiles().length === n0 + 1, 20000, 'what was recorded while the notice showed is kept');
   cmd('host', 'test-rec-noshow off');
   cmd('viewer', 'test-view-rec on'); await until(() => T('viewer').rec === 'On', 5000, 'recording once more');
